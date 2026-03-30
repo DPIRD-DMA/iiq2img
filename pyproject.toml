@@ -1,0 +1,24 @@
+[project]
+name = "iiq2img"
+version = "0.1.0"
+description = "Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "opencv-python>=4.8",
+    "opencv-python-headless>=4.8",
+    "pillow>=10.0",
+    "rawpy>=0.19",
+]
+
+[project.scripts]
+iiq2img = "iiq2img.converter:_cli_main"
+
+[dependency-groups]
+dev = [
+    "jupyter>=1.1.1",
+    "mypy>=1.19",
+    "pytest>=9.0.2",
+    "ruff>=0.15.8",
+]
