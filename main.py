@@ -2,7 +2,7 @@
 
 import sys
 
-from iiq2img import OutputFormat, batch_convert, convert_iiq
+from iiq2img import batch_convert, convert_iiq
 from iiq2img.converter import run_benchmark
 
 if __name__ == "__main__":
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         batch_convert(
             input_dir,
             output_dir,
-            output_format=OutputFormat(fmt_str),
+            output_format=fmt_str,
             compress_quality=cq,
             workers=workers,
         )

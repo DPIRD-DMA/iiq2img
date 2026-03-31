@@ -207,3 +207,7 @@ marimo/_lsp/
 __marimo__/
 PhaseOneSample/*.IIQ
 uv.lock
+output/*.jpg
+output/*.tif
+output/*.jgw
+georef.jpg.aux.xml
