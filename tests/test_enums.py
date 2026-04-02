@@ -4,10 +4,12 @@ import pytest
 
 from iiq2img import (
     ConvertResult,
+    Pipeline,
     normalize_format,
     Quality,
     FORMAT_EXTENSIONS,
 )
+from iiq2img.converter import _resolve_pipeline
 
 
 class TestEnums:
@@ -113,3 +115,29 @@ class TestConvertResultEdgeCases:
         )
         assert r.width == 0
         assert r.height == 0
+
+
+class TestPipeline:
+    def test_pipeline_values(self):
+        assert Pipeline.LIBRAW.value == "libraw"
+        assert Pipeline.FAST.value == "fast"
+
+    def test_pipeline_members(self):
+        assert len(Pipeline) == 2
+        assert set(p.value for p in Pipeline) == {"libraw", "fast"}
+
+    def test_resolve_pipeline_from_string(self):
+        assert _resolve_pipeline("libraw") == Pipeline.LIBRAW
+        assert _resolve_pipeline("fast") == Pipeline.FAST
+
+    def test_resolve_pipeline_case_insensitive(self):
+        assert _resolve_pipeline("FAST") == Pipeline.FAST
+        assert _resolve_pipeline("LibRaw") == Pipeline.LIBRAW
+
+    def test_resolve_pipeline_from_enum(self):
+        assert _resolve_pipeline(Pipeline.FAST) == Pipeline.FAST
+        assert _resolve_pipeline(Pipeline.LIBRAW) == Pipeline.LIBRAW
+
+    def test_resolve_pipeline_invalid_raises(self):
+        with pytest.raises(ValueError, match="Unknown pipeline"):
+            _resolve_pipeline("invalid")

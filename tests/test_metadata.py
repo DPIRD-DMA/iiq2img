@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 
 from iiq2img import extract_metadata
-from iiq2img.converter import (
-    _copy_metadata_to_output,
+from iiq2img.metadata import (
+    copy_metadata_to_output as _copy_metadata_to_output,
     _inject_metadata_into_jpeg,
     _inject_metadata_into_png,
     _inject_metadata_into_tiff,
@@ -18,7 +18,7 @@ from iiq2img.converter import (
 
 
 class TestExtractMetadata:
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_returns_exif_tags(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -31,7 +31,7 @@ class TestExtractMetadata:
         assert result["Make"] == "Phase One"
         assert result["Model"] == "iXM-GS120"
 
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_extracts_xmp(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -45,14 +45,14 @@ class TestExtractMetadata:
         assert "xmp" in result
         assert "GPS data" in result["xmp"]
 
-    @patch("iiq2img.converter.PILImage.open", side_effect=Exception("bad file"))
+    @patch("iiq2img.metadata.PILImage.open", side_effect=Exception("bad file"))
     def test_returns_empty_on_error(self, mock_open):
         result = extract_metadata("nonexistent.iiq")
         assert result == {}
 
 
 class TestExtractMetadataEdgeCases:
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_unknown_tag_uses_id_as_name(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -64,7 +64,7 @@ class TestExtractMetadataEdgeCases:
         result = extract_metadata("fake.iiq")
         assert result["99999"] == "unknown value"
 
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_xmp_bytes_decoded(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -77,7 +77,7 @@ class TestExtractMetadataEdgeCases:
         assert "xmp" in result
         assert isinstance(result["xmp"], str)
 
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_xmp_non_bytes_ignored(self, mock_open):
         """If tag 700 is not bytes, xmp should not appear in result."""
         mock_img = MagicMock()
@@ -90,7 +90,7 @@ class TestExtractMetadataEdgeCases:
         result = extract_metadata("fake.iiq")
         assert "xmp" not in result
 
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_multiple_tags(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -111,7 +111,7 @@ class TestExtractMetadataEdgeCases:
 
 
 class TestReadIiqExifAndXmp:
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_returns_exif_and_xmp(self, mock_open):
         mock_img = MagicMock()
         mock_exif = MagicMock()
@@ -123,19 +123,19 @@ class TestReadIiqExifAndXmp:
         from PIL.Image import Exif
 
         with patch.object(Exif, "tobytes", return_value=exif_serialized):
-            with patch("iiq2img.converter.PILImage.open", return_value=mock_img):
+            with patch("iiq2img.metadata.PILImage.open", return_value=mock_img):
                 mock_img.getexif.return_value = mock_exif
                 # Since we can't easily mock the new_exif inside the function,
                 # test the error path instead
                 pass
 
-    @patch("iiq2img.converter.PILImage.open", side_effect=Exception("corrupt"))
+    @patch("iiq2img.metadata.PILImage.open", side_effect=Exception("corrupt"))
     def test_returns_none_on_error(self, mock_open):
         exif, xmp = _read_iiq_exif_and_xmp("nonexistent.iiq")
         assert exif is None
         assert xmp is None
 
-    @patch("iiq2img.converter.PILImage.open")
+    @patch("iiq2img.metadata.PILImage.open")
     def test_xmp_string_converted_to_bytes(self, mock_open):
         """If XMP tag 700 is a string instead of bytes, it should be encoded."""
         mock_img = MagicMock()
@@ -155,38 +155,38 @@ class TestReadIiqExifAndXmp:
 
 
 class TestCopyMetadataToOutput:
-    @patch("iiq2img.converter._inject_metadata_into_jpeg")
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
+    @patch("iiq2img.metadata._inject_metadata_into_jpeg")
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
     def test_routes_to_jpeg(self, mock_read, mock_inject):
         _copy_metadata_to_output("in.iiq", "/tmp/out.jpg", {"Make": "Phase One"})
         mock_inject.assert_called_once_with(Path("/tmp/out.jpg"), b"exif", b"xmp")
 
-    @patch("iiq2img.converter._inject_metadata_into_jpeg")
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
+    @patch("iiq2img.metadata._inject_metadata_into_jpeg")
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
     def test_routes_to_jpeg_uppercase(self, mock_read, mock_inject):
         _copy_metadata_to_output("in.iiq", "/tmp/out.JPEG", {"Make": "Phase One"})
         mock_inject.assert_called_once()
 
-    @patch("iiq2img.converter._inject_metadata_into_png")
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
+    @patch("iiq2img.metadata._inject_metadata_into_png")
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
     def test_routes_to_png(self, mock_read, mock_inject):
         metadata = {"Make": "Phase One"}
         _copy_metadata_to_output("in.iiq", "/tmp/out.png", metadata)
         mock_inject.assert_called_once_with(Path("/tmp/out.png"), metadata)
 
-    @patch("iiq2img.converter._inject_metadata_into_tiff")
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
+    @patch("iiq2img.metadata._inject_metadata_into_tiff")
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
     def test_routes_to_tiff(self, mock_read, mock_inject):
         _copy_metadata_to_output("in.iiq", "/tmp/out.tif", {"Make": "Phase One"})
         mock_inject.assert_called_once_with(Path("/tmp/out.tif"), b"exif", b"xmp")
 
-    @patch("iiq2img.converter._inject_metadata_into_tiff")
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
+    @patch("iiq2img.metadata._inject_metadata_into_tiff")
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(b"exif", b"xmp"))
     def test_routes_to_tiff_ext(self, mock_read, mock_inject):
         _copy_metadata_to_output("in.iiq", "/tmp/out.tiff", {})
         mock_inject.assert_called_once()
 
-    @patch("iiq2img.converter._read_iiq_exif_and_xmp", return_value=(None, None))
+    @patch("iiq2img.metadata._read_iiq_exif_and_xmp", return_value=(None, None))
     def test_unknown_extension_no_crash(self, mock_read):
         _copy_metadata_to_output("in.iiq", "/tmp/out.bmp", {})
         # Should not raise

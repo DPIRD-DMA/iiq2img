@@ -4,12 +4,13 @@ from iiq2img.converter import (
     ConvertResult,
     Pipeline,
     Quality,
-    FORMAT_EXTENSIONS,
     batch_convert,
     convert_iiq,
-    extract_metadata,
-    normalize_format,
+)
+from iiq2img.encode import (
+    FORMAT_EXTENSIONS,
     format_from_path,
+    normalize_format,
 )
 from iiq2img.georef import (
     GeoInfo,
@@ -18,6 +19,7 @@ from iiq2img.georef import (
     write_geotiff,
     write_world_file,
 )
+from iiq2img.metadata import extract_metadata
 
 __all__ = [
     "ConvertResult",

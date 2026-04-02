@@ -3,7 +3,7 @@
 import sys
 from unittest.mock import patch
 
-from iiq2img import ConvertResult
+from iiq2img import ConvertResult, Pipeline
 from iiq2img.converter import _cli_main
 
 
@@ -39,6 +39,7 @@ class TestCliMain:
             output_format="png",
             compress_quality=75,
             workers=4,
+            pipeline=Pipeline.LIBRAW,
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -51,6 +52,22 @@ class TestCliMain:
             output_format="jpg",
             compress_quality=90,
             workers=None,
+            pipeline=Pipeline.LIBRAW,
+        )
+
+    @patch("iiq2img.converter.batch_convert")
+    def test_batch_fast_flag(self, mock_batch):
+        with patch.object(
+            sys, "argv", ["iiq2img", "batch", "/in", "/out", "jpg", "90", "4", "--fast"]
+        ):
+            _cli_main()
+        mock_batch.assert_called_once_with(
+            "/in",
+            "/out",
+            output_format="jpg",
+            compress_quality=90,
+            workers=4,
+            pipeline=Pipeline.FAST,
         )
 
     @patch("iiq2img.converter.convert_iiq")
@@ -64,7 +81,22 @@ class TestCliMain:
         )
         with patch.object(sys, "argv", ["iiq2img", "photo.IIQ"]):
             _cli_main()
-        mock_convert.assert_called_once_with("photo.IIQ")
+        mock_convert.assert_called_once_with("photo.IIQ", pipeline=Pipeline.LIBRAW)
         output = capsys.readouterr().out
-        assert "Output: /tmp/out.jpg" in output
+        assert "/tmp/out.jpg" in output
         assert "1000x500" in output
+
+    @patch("iiq2img.converter.convert_iiq")
+    def test_single_file_fast_flag(self, mock_convert, capsys):
+        mock_convert.return_value = ConvertResult(
+            output_path="/tmp/out.jpg",
+            width=1000,
+            height=500,
+            elapsed_ms=600.0,
+            file_size_bytes=2_000_000,
+        )
+        with patch.object(sys, "argv", ["iiq2img", "photo.IIQ", "--fast"]):
+            _cli_main()
+        mock_convert.assert_called_once_with("photo.IIQ", pipeline=Pipeline.FAST)
+        output = capsys.readouterr().out
+        assert "Pipeline: fast" in output

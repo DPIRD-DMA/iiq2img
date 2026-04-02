@@ -2,23 +2,26 @@
 
 Fast IIQ-to-image converter for **Phase One iXM-GS120** (120 MP) raw files.
 
-Uses [rawpy](https://github.com/letmaik/rawpy) (LibRaw) + OpenCV for demosaicing and encoding, bypassing the slow Phase One SDK pipeline. Retains all EXIF, GPS, and XMP metadata from the original IIQ file.
+Converts 120 MP IIQ files (~115 MB) to JPEG, PNG, or TIFF with full EXIF/GPS/XMP metadata preservation and optional georeferencing (world files, GeoTIFF).
+
+## Pipelines
+
+Two demosaic pipelines are available:
+
+| Pipeline | Algorithm | Demosaic | End-to-end (JPEG) | Quality vs LibRaw |
+|----------|-----------|----------|-------------------|-------------------|
+| **LIBRAW** (default) | LibRaw PPG | ~2.9 s | ~3.3 s | Reference |
+| **FAST** | cv2 edge-aware + numba LUTs | ~600 ms (4.6x) | ~1.0 s (3.4x) | Mean diff 6.5/255, median 3/255 |
+
+The fast pipeline matches LibRaw's output by using BT.709 gamma, full-range black level scaling, and empirically tuned auto-brightness. See [FINDINGS.md](FINDINGS.md) for the research behind it.
 
 ## Performance
 
-| Approach | Per-file | Effective throughput |
-|---|---|---|
+| Approach | Per-file (JPEG) | Throughput (8 workers) |
+|----------|-----------------|----------------------|
 | Embedded thumbnail | ~1 ms | - |
-| Full-res JPEG (single) | ~3.4 s | 0.3 img/s |
-| Full-res JPEG (8 workers) | ~880 ms | 1.1 img/s |
-
-*Benchmarked on 120 MP IIQ files (~115 MB each), 32-core CPU.*
-
-### Optimizations
-
-- PPG demosaic algorithm (fastest for this sensor)
-- Direct EXIF serialization (no dummy JPEG roundtrip)
-- Multiprocessing batch with spawn context for safe parallelism
+| Full-res LIBRAW | ~3.3 s | ~1.1 img/s |
+| Full-res FAST | ~1.0 s | ~3+ img/s |
 
 ## Installation
 
@@ -33,44 +36,56 @@ uv sync
 ### CLI
 
 ```bash
-# Convert a single file
-iiq2img photo.IIQ
+# Convert a single file (LibRaw pipeline)
+uv run iiq2img photo.IIQ
+
+# Convert with the fast pipeline
+uv run iiq2img photo.IIQ --fast
 
 # Batch convert a directory (parallel)
-iiq2img batch ./input_dir ./output_dir jpg 90 8
-#                                      fmt qual workers
+uv run iiq2img batch ./input_dir ./output_dir jpg 90 8 --fast
+#                                              fmt qual workers
 
 # Run benchmark
-iiq2img benchmark photo.IIQ
+uv run iiq2img benchmark photo.IIQ
 ```
 
 ### As a library
 
 ```python
-from iiq2img import convert_iiq, batch_convert, Quality, OutputFormat
+from iiq2img import convert_iiq, batch_convert, Pipeline, Quality
 
-# Full-resolution JPEG
+# Full-resolution JPEG (LibRaw, default)
 result = convert_iiq("photo.IIQ", "output.jpg")
+
+# Fast pipeline (~3x faster end-to-end)
+result = convert_iiq("photo.IIQ", "output.jpg", pipeline=Pipeline.FAST)
 
 # Thumbnail (~1 ms)
 result = convert_iiq("photo.IIQ", "thumb.jpg", quality=Quality.THUMBNAIL)
 
 # PNG with max dimension constraint
-result = convert_iiq(
-    "photo.IIQ",
-    "output.png",
-    output_format=OutputFormat.PNG,
-    max_dimension=4000,
-)
+result = convert_iiq("photo.IIQ", "output.png", output_format="png", max_dimension=4000)
 
-# Batch convert (parallel, 8 workers)
+# Batch convert (parallel, fast pipeline)
 results = batch_convert(
     "./raw_images",
     "./converted",
-    output_format=OutputFormat.JPEG,
+    output_format="jpg",
     compress_quality=90,
     workers=8,
+    pipeline=Pipeline.FAST,
 )
+```
+
+### Georeferencing
+
+```python
+# JPEG/PNG: creates sidecar world file (.jgw/.pgw)
+result = convert_iiq("photo.IIQ", "output.jpg", georef=True)
+
+# TIFF: writes GeoTIFF with embedded CRS
+result = convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=True)
 ```
 
 ### Output formats
@@ -83,10 +98,6 @@ JPEG, PNG, and TIFF. Metadata (EXIF/XMP) is embedded in all formats.
 # Run tests
 uv run pytest
 
-# Lint & format
-uv run ruff check .
-uv run ruff format .
-
-# Type check
-uv run mypy iiq2img/
+# Run fast-pipeline quality comparison
+uv run python fast_demosaic_research.py
 ```

@@ -8,6 +8,7 @@ import numpy as np
 
 from iiq2img import (
     ConvertResult,
+    Pipeline,
     Quality,
     convert_iiq,
 )
@@ -15,24 +16,26 @@ from iiq2img.converter import _convert_one_for_batch
 
 
 class TestConvertIiq:
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={"Make": "Phase One"})
     @patch("iiq2img.converter._demosaic")
-    def test_full_quality_pipeline(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_full_quality_pipeline(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         rgb = np.zeros((200, 300, 3), dtype=np.uint8)
         mock_demosaic.return_value = rgb
         out = str(tmp_path / "out.jpg")
 
         result = convert_iiq(str(fake_iiq), out, quality=Quality.FULL)
 
-        mock_demosaic.assert_called_once_with(fake_iiq)
+        mock_demosaic.assert_called_once_with(fake_iiq, Pipeline.LIBRAW)
         assert result.width == 300
         assert result.height == 200
         assert result.output_path == Path(out)
         assert result.metadata == {"Make": "Phase One"}
         assert os.path.exists(out)
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._extract_thumbnail")
     def test_thumbnail_path(self, mock_thumb, mock_meta, mock_copy, tmp_path, fake_iiq):
@@ -44,7 +47,7 @@ class TestConvertIiq:
         assert result.width == 640
         assert result.height == 480
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_default_output_path(self, mock_demosaic, mock_meta, mock_copy, tmp_path):
@@ -55,10 +58,12 @@ class TestConvertIiq:
         result = convert_iiq(iiq)
         assert result.output_path == tmp_path / "image.jpg"
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
-    def test_png_output_format(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_png_output_format(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
         out = str(tmp_path / "out.png")
 
@@ -66,10 +71,12 @@ class TestConvertIiq:
         assert result.output_path == Path(out)
         assert os.path.exists(out)
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
-    def test_max_dimension_resize(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_max_dimension_resize(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         mock_demosaic.return_value = np.zeros((1000, 2000, 3), dtype=np.uint8)
         out = str(tmp_path / "out.jpg")
 
@@ -77,7 +84,7 @@ class TestConvertIiq:
         assert result.width == 500
         assert result.height == 250
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata")
     @patch("iiq2img.converter._demosaic")
     def test_no_metadata_extraction(
@@ -93,17 +100,19 @@ class TestConvertIiq:
 
 
 class TestConvertIiqEdgeCases:
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
-    def test_tiff_output_format(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_tiff_output_format(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
         out = str(tmp_path / "out.tif")
         result = convert_iiq(str(fake_iiq), out, output_format="tiff")
         assert result.output_path == Path(out)
         assert os.path.exists(out)
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_max_dim_no_resize_when_smaller(
@@ -117,7 +126,7 @@ class TestConvertIiqEdgeCases:
         assert result.width == 200
         assert result.height == 100
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={"Make": "Phase One"})
     @patch("iiq2img.converter._demosaic")
     def test_metadata_copied_when_present(
@@ -128,7 +137,7 @@ class TestConvertIiqEdgeCases:
         convert_iiq(str(fake_iiq), out)
         mock_copy.assert_called_once()
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_empty_metadata_skips_copy(
@@ -140,7 +149,7 @@ class TestConvertIiqEdgeCases:
         convert_iiq(str(fake_iiq), out, extract_meta=True)
         mock_copy.assert_not_called()
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_creates_output_directory(
@@ -152,25 +161,29 @@ class TestConvertIiqEdgeCases:
         convert_iiq(str(fake_iiq), out)
         assert os.path.exists(out)
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
-    def test_result_has_elapsed_ms(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_result_has_elapsed_ms(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
         out = str(tmp_path / "out.jpg")
         result = convert_iiq(str(fake_iiq), out)
         assert result.elapsed_ms >= 0
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
-    def test_result_has_file_size(self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq):
+    def test_result_has_file_size(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
         mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
         out = str(tmp_path / "out.jpg")
         result = convert_iiq(str(fake_iiq), out)
         assert result.file_size_bytes > 0
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_default_output_path_png(
@@ -182,7 +195,7 @@ class TestConvertIiqEdgeCases:
         result = convert_iiq(iiq, output_format="png")
         assert result.output_path == tmp_path / "image.png"
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_default_output_path_tiff(
@@ -194,7 +207,7 @@ class TestConvertIiqEdgeCases:
         result = convert_iiq(iiq, output_format="tiff")
         assert result.output_path == tmp_path / "image.tif"
 
-    @patch("iiq2img.converter._copy_metadata_to_output")
+    @patch("iiq2img.converter.copy_metadata_to_output")
     @patch("iiq2img.converter.extract_metadata", return_value={})
     @patch("iiq2img.converter._demosaic")
     def test_compress_quality_passed_through(
@@ -228,6 +241,7 @@ class TestConvertOneForBatch:
             "jpg",
             90,
             None,
+            Pipeline.LIBRAW,
         )
         result = _convert_one_for_batch(args)
         mock_convert.assert_called_once_with(
@@ -237,6 +251,7 @@ class TestConvertOneForBatch:
             output_format="jpg",
             compress_quality=90,
             max_dimension=None,
+            pipeline=Pipeline.LIBRAW,
         )
         assert result.output_path == "/out/test.jpg"
 
@@ -256,8 +271,31 @@ class TestConvertOneForBatch:
             "jpg",
             75,
             500,
+            Pipeline.LIBRAW,
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
         assert call_kwargs["max_dimension"] == 500
         assert call_kwargs["compress_quality"] == 75
+
+    @patch("iiq2img.converter.convert_iiq")
+    def test_passes_fast_pipeline(self, mock_convert):
+        mock_convert.return_value = ConvertResult(
+            output_path="/out/test.jpg",
+            width=100,
+            height=100,
+            elapsed_ms=10.0,
+            file_size_bytes=1024,
+        )
+        args = (
+            "/in/test.IIQ",
+            "/out/test.jpg",
+            Quality.FULL,
+            "jpg",
+            90,
+            None,
+            Pipeline.FAST,
+        )
+        _convert_one_for_batch(args)
+        call_kwargs = mock_convert.call_args[1]
+        assert call_kwargs["pipeline"] == Pipeline.FAST

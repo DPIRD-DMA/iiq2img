@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from iiq2img.converter import (
-    _encode_image,
-    _resize_max_dim,
+from iiq2img.encode import (
+    encode_image as _encode_image,
+    resize_max_dim as _resize_max_dim,
 )
 
 

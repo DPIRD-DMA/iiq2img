@@ -138,7 +138,7 @@ def extract_geo_info(
     yaw = float(yaw_str) if yaw_str else 0.0
 
     # Normalize yaw from IMU format if needed (e.g. 2366373/10000)
-    if "/" in (yaw_str or ""):
+    if yaw_str and "/" in yaw_str:
         yaw = _parse_rational(yaw_str)
 
     return GeoInfo(
@@ -185,7 +185,7 @@ def compute_transform(geo: GeoInfo) -> Affine:
     return Affine(pixel_deg_x, 0.0, ul_x, 0.0, -pixel_deg_y, ul_y)
 
 
-def write_world_file(image_path: str, geo: GeoInfo) -> str:
+def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
     """Write a world file (.jgw/.pgw/.tfw) for the given image.
 
     Args:
