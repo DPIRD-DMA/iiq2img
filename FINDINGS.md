@@ -78,13 +78,21 @@ Empirical sweep of clip fractions with BT.709 gamma:
 | 0.5% | 7.37 | R=1.032, G=1.022, B=1.038 |
 | 1.0% | 13.87 | R=1.123, G=1.115, B=1.135 |
 
-**0.4% clip** is optimal — all channel ratios within 1.3% of the reference.
+Initial tuning on a single image (P0286625) pointed to 0.4%. Testing across all 4 sample images revealed 0.4% was slightly too conservative for some scenes (G channel up to 3% dark). **0.45% clip** is the best compromise:
+
+| Clip % | Avg diff (4 images) | Worst G ratio | Spread |
+|--------|---------------------|---------------|--------|
+| 0.40% | 7.48 | 0.970 | 6.5–8.2 |
+| **0.45%** | **7.28** | **0.986** | **6.8–7.5** |
+| 0.50% | 7.42 | 1.000 | 6.9–8.1 |
+
+0.45% has the lowest average diff, the tightest spread across images, and keeps all channel ratios within 2.6% of reference.
 
 The original pipeline used 0.1%, which was too conservative (too dark with BT.709 gamma).
 
 ## Error decomposition
 
-With the optimised pipeline (BT.709 + full-range scale + 0.4% clip), total mean diff is **6.50/255**:
+With the optimised pipeline (BT.709 + full-range scale + 0.45% clip), total mean diff is **~7/255**:
 
 | Source | Mean diff contribution |
 |--------|----------------------|
@@ -109,7 +117,7 @@ raw_image_visible (12768x9564, uint16, RGGB Bayer)
     │  COLOR_BAYER_RG2BGR_EA → uint16 RGB (not BGR despite the name)
     │
     ▼  Auto-brightness
-    │  Subsample 8× → compute luma → histogram → 0.4% highlight clip → threshold
+    │  Subsample 8× → compute luma → histogram → 0.45% highlight clip → threshold
     │
     ▼  [numba parallel] BT.709 gamma LUT
     │  uint16→uint8 LUT: auto-bright scale + BT.709 gamma
@@ -117,23 +125,71 @@ raw_image_visible (12768x9564, uint16, RGGB Bayer)
     ▼  uint8 RGB (12768x9564)
 ```
 
+## Colour matching across images
+
+Validated on 4 sample IIQ files (different scenes, exposures):
+
+| Image | Mean diff | Median | 95th | R ratio | G ratio | B ratio |
+|-------|-----------|--------|------|---------|---------|---------|
+| P0286625 | 6.83 | 3 | 26 | 1.021 | 1.010 | 1.026 |
+| P0286635 | 7.38 | 3 | 26 | 0.999 | 0.986 | 1.001 |
+| P0286642 | 7.51 | 3 | 28 | 1.022 | 1.008 | 1.026 |
+| P0286690 | 7.39 | 3 | 27 | 1.003 | 0.991 | 1.006 |
+
+All channel ratios within 2.6% of LibRaw reference. Median diff is a consistent 3/255 across all images. No scene-dependent bias — the pipeline generalises well beyond the single image it was tuned on.
+
+## Performance profiling
+
+Profiled end-to-end on a single 120 MP IIQ → JPEG conversion (after numba warmup):
+
+| Stage | Time | % | Notes |
+|-------|------|---|-------|
+| IIQ decompress (rawpy) | 378ms | 41% | C code, single-threaded, can't optimise |
+| WB LUT on Bayer (numba) | 22ms | 2% | Already parallel (`prange`) |
+| cv2 EA demosaic | 75ms | 8% | C++ with OpenMP |
+| Auto-brightness | 29ms | 3% | Numpy on 1/64th of pixels |
+| Gamma LUT (numba) | 40ms | 4% | Already parallel |
+| RGB→BGR + JPEG encode | 406ms | 42% | libjpeg-turbo via cv2 |
+
+The two bottlenecks (IIQ read 41%, JPEG encode 42%) are both optimised C and account for 83% of the time. The actual fast pipeline compute (WB + demosaic + gamma) is only **166ms (17%)**.
+
+### Optimisations applied
+
+- **Skip `.copy()` on Bayer data**: The WB LUT reads from rawpy's view and writes to a new array, so we can avoid the 26ms copy. `raw.close()` is safe after the LUT since `b_corr` is independent. Saves ~45ms (8%).
+- **Subsampled auto-brightness**: Histogram computed on 8× subsampled luma (64× fewer pixels). Negligible quality impact, saves ~200ms vs full-res.
+- **Single-pass gamma**: Combined auto-bright scale + BT.709 gamma into one uint16→uint8 LUT. One memory pass instead of two.
+
+### What didn't help
+
+- **turbojpeg**: Same speed as cv2 for 120 MP JPEG (both use libjpeg-turbo). No win even accounting for skipping RGB→BGR.
+- **Pillow JPEG**: Slower than cv2.
+- **Threading within a single image**: numba `prange` and cv2 OpenMP already saturate all cores during their stages.
+- **Contiguous array hint**: Bayer view from rawpy has non-contiguous strides, but the WB LUT copies to contiguous output anyway.
+
+### Batch parallelism
+
+Overlapping JPEG encode of image N with demosaic of image N+1 in a background thread saves **~22% in sequential batch mode** (tested on 2 images: 2004ms → 1573ms). This works because rawpy unpack is single-threaded while JPEG encode can use idle cores.
+
+For `workers>1` batch mode, the existing multiprocessing already parallelises across images, which is more effective.
+
 ## Quality summary
 
 | Metric | Value |
 |--------|-------|
-| Mean abs diff vs LibRaw PPG | 6.50 / 255 |
+| Mean abs diff vs LibRaw PPG | 6.8–7.5 / 255 (across 4 images) |
 | Median abs diff | 3 / 255 |
-| 95th percentile diff | 25 / 255 |
-| Per-channel mean diff | R=7.2, G=3.3, B=9.0 |
-| Channel mean ratios (fast/ref) | R=1.008, G=0.997, B=1.013 |
+| 95th percentile diff | 26–28 / 255 |
+| Channel mean ratios (fast/ref) | All within 2.6% of 1.0 |
 | Demosaic speed | ~600ms (4.6x faster than LibRaw PPG) |
-| End-to-end speed (JPEG) | ~1.0s (3.4x faster) |
+| End-to-end speed (JPEG) | ~920ms (3.6x faster) |
 
 ## Dead ends
 
 Things we tried that didn't help:
 
-- **Applying `raw.color_matrix`**: LibRaw doesn't use it for this camera. Applying it increased mean diff from 10 → 13.
-- **sRGB gamma**: Wrong curve. LibRaw defaults to BT.709.
+- **Applying `raw.color_matrix`**: LibRaw doesn't use it for this camera (`rgb_xyz_matrix` is all zeros). Applying it increased mean diff from 10 → 13.
+- **sRGB gamma**: Wrong curve. LibRaw defaults to BT.709. Switching was the single biggest win (~12.8/255).
 - **VNG / bilinear demosaic**: cv2 only supports these for uint8, not uint16. Would lose precision.
 - **Per-channel auto-brightness**: LibRaw uses a single brightness scale, not per-channel. Our luma-based approach already matches well.
+- **turbojpeg**: No speed advantage over cv2 for 120 MP images.
+- **Skipping rawpy**: `rawpy.imread` itself is instant; the cost is in `raw.raw_image_visible` which triggers LibRaw's IIQ decompressor (378ms, C code). No way around it without a custom IIQ parser.

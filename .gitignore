@@ -209,9 +209,5 @@ __marimo__/
 # Custom
 PhaseOneSample/*.IIQ
 uv.lock
-output/*.jpg
-output/*.tif
-output/*.jgw
-georef.jpg.aux.xml
-output/*/*.jpg
+output/
 *.DS_Store

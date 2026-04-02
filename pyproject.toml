@@ -16,6 +16,10 @@ dependencies = [
 [project.scripts]
 iiq2img = "iiq2img.converter:_cli_main"
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 include = ["iiq2img*"]
 
