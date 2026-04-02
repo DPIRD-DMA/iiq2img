@@ -213,3 +213,5 @@ output/*.jpg
 output/*.tif
 output/*.jgw
 georef.jpg.aux.xml
+output/*/*.jpg
+*.DS_Store

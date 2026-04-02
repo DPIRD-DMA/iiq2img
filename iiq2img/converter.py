@@ -12,6 +12,7 @@ Optimizations applied:
   - Direct EXIF serialization (no dummy JPEG roundtrip)
   - Eliminated redundant RGB<->BGR conversions in resize path
   - Multiprocessing batch with spawn context for safe parallelism
+  - Fast pipeline: cv2 EA demosaic + numba parallel LUT (~5× faster than LibRaw PPG)
 """
 
 import multiprocessing
@@ -25,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 
 import cv2
+import numba
 import numpy as np
 import rawpy
 from PIL import Image as PILImage
@@ -34,6 +36,129 @@ from PIL.ExifTags import TAGS
 class Quality(Enum):
     THUMBNAIL = "thumbnail"  # 640x480 embedded bitmap, ~1ms
     FULL = "full"  # full-res (12768x9564), ~2.7s
+
+
+class Pipeline(Enum):
+    LIBRAW = "libraw"  # LibRaw PPG demosaic — accurate, ~2.8s, default
+    FAST = "fast"      # cv2 EA + numba LUT — ~5× faster, visually equivalent
+
+
+def _resolve_pipeline(value: "str | Pipeline") -> Pipeline:
+    if isinstance(value, Pipeline):
+        return value
+    try:
+        return Pipeline(value.lower())
+    except ValueError:
+        raise ValueError(
+            f"Unknown pipeline: {value!r}. Expected one of: 'libraw', 'fast'"
+        ) from None
+
+
+# ── Fast pipeline internals ──────────────────────────────────────────────────
+
+_IIQ_BLACK_LEVEL = 1024  # rawpy incorrectly reports 0; true value confirmed empirically
+
+_numba_warmed_up = False
+
+
+def _ensure_numba_warmed_up() -> None:
+    global _numba_warmed_up
+    if _numba_warmed_up:
+        return
+    dummy16 = np.zeros((4, 4, 3), dtype=np.uint16)
+    dummy_bayer = np.zeros((4, 4), dtype=np.uint16)
+    dummy_lut = np.zeros(65536, dtype=np.uint8)
+    _fast_lut3(dummy16, dummy_lut, dummy_lut, dummy_lut)
+    _fast_wb_lut_bayer(dummy_bayer, dummy_lut.view(np.uint16),
+                       dummy_lut.view(np.uint16), dummy_lut.view(np.uint16))
+    _numba_warmed_up = True
+
+
+@numba.njit(parallel=True, cache=True)
+def _fast_lut3(img: np.ndarray,
+               lr: np.ndarray, lg: np.ndarray, lb: np.ndarray) -> np.ndarray:
+    """Apply 3 independent uint16→uint8 LUTs to an (H,W,3) image in parallel."""
+    H, W = img.shape[0], img.shape[1]
+    out = np.empty((H, W, 3), numba.uint8)
+    for i in numba.prange(H):
+        for j in range(W):
+            out[i, j, 0] = lr[img[i, j, 0]]
+            out[i, j, 1] = lg[img[i, j, 1]]
+            out[i, j, 2] = lb[img[i, j, 2]]
+    return out
+
+
+@numba.njit(parallel=True, cache=True)
+def _fast_wb_lut_bayer(bayer: np.ndarray,
+                       lr: np.ndarray, lg: np.ndarray, lb: np.ndarray) -> np.ndarray:
+    """Apply per-channel uint16→uint16 black+WB LUTs to RGGB Bayer in parallel."""
+    H, W = bayer.shape
+    out = np.empty_like(bayer)
+    for i in numba.prange(H):
+        if i % 2 == 0:
+            for j in range(W):
+                out[i, j] = lr[bayer[i, j]] if j % 2 == 0 else lg[bayer[i, j]]
+        else:
+            for j in range(W):
+                out[i, j] = lg[bayer[i, j]] if j % 2 == 0 else lb[bayer[i, j]]
+    return out
+
+
+def _build_wb_luts(wb: np.ndarray, black: int = _IIQ_BLACK_LEVEL) -> tuple:
+    inp = np.arange(65536, dtype=np.float32)
+    lr = np.clip((inp - black) * wb[0], 0, 65535).astype(np.uint16)
+    lg = np.clip((inp - black),          0, 65535).astype(np.uint16)
+    lb = np.clip((inp - black) * wb[2], 0, 65535).astype(np.uint16)
+    return lr, lg, lb
+
+
+def _build_gamma_lut(threshold: float) -> np.ndarray:
+    """uint16 → uint8 LUT combining auto-brightness scale + sRGB gamma."""
+    x = np.arange(65536, dtype=np.float32) / (threshold * 65535.0)
+    np.clip(x, 0.0, 1.0, out=x)
+    gamma = np.where(
+        x <= 0.0031308,
+        12.92 * x,
+        1.055 * np.power(np.maximum(x, 1e-9), 1.0 / 2.4) - 0.055,
+    )
+    return np.clip(gamma * 255, 0, 255).astype(np.uint8)
+
+
+def _demosaic_fast(iiq_path: Path) -> np.ndarray:
+    """
+    Fast IIQ demosaic: cv2 edge-aware Bayer + numba LUT pipeline (~5× vs LibRaw PPG).
+
+    Pipeline: raw_image_visible → black subtraction + WB (numba LUT on Bayer)
+    → cv2 EA demosaic → auto-brightness → sRGB gamma (numba LUT) → uint8 RGB
+    """
+    _ensure_numba_warmed_up()
+
+    try:
+        raw = rawpy.imread(str(iiq_path))
+    except rawpy.LibRawIOError:
+        raise OSError(f"Failed to read IIQ file (corrupt or unreadable): {iiq_path}") from None
+
+    b16 = raw.raw_image_visible.copy()
+    wb = np.array(raw.camera_whitebalance[:3], dtype=np.float32)
+    wb /= wb[1]
+    raw.close()
+
+    # Black subtraction + WB on raw Bayer data
+    lr, lg, lb = _build_wb_luts(wb)
+    b_corr = _fast_wb_lut_bayer(b16, lr, lg, lb)
+
+    # Edge-aware demosaic: RGGB uint16 → uint16, output is RGB order (not BGR)
+    rgb16 = cv2.cvtColor(b_corr, cv2.COLOR_BAYER_RG2BGR_EA)
+
+    # Auto-brightness: subsample luma, clip 0.1% of highlights
+    sub = rgb16[::8, ::8].astype(np.float32) / 65535.0
+    luma = 0.2126 * sub[:, :, 0] + 0.7152 * sub[:, :, 1] + 0.0722 * sub[:, :, 2]
+    hist, edges = np.histogram(luma.ravel(), bins=4096, range=(0.0, 1.0))
+    idx = np.searchsorted(np.cumsum(hist), luma.size * 0.999)
+    threshold = float(edges[min(idx + 1, len(edges) - 1)])
+
+    gamma_lut = _build_gamma_lut(threshold)
+    return _fast_lut3(rgb16, gamma_lut, gamma_lut, gamma_lut)
 
 
 _FORMAT_ALIASES: dict[str, str] = {
@@ -276,6 +401,7 @@ def convert_iiq(
     extract_meta: bool = True,
     georef: bool = False,
     rotate_180: bool = False,
+    pipeline: "str | Pipeline" = Pipeline.LIBRAW,
 ) -> ConvertResult:
     """
     Convert a Phase One IIQ raw file to JPEG, PNG, or TIFF.
@@ -291,12 +417,17 @@ def convert_iiq(
         extract_meta: Whether to extract and retain EXIF metadata
         georef: If True, georeference the output (world file for JPEG/PNG, GeoTIFF for TIFF)
         rotate_180: If True, rotate the image 180° (for inverted-mount sensors)
+        pipeline: Demosaic pipeline to use (Pipeline.LIBRAW or Pipeline.FAST).
+                  LIBRAW uses LibRaw PPG — accurate, ~2.8s.
+                  FAST uses cv2 edge-aware demosaic + numba LUTs — ~5× faster,
+                  visually equivalent (mean pixel diff ~10/255 vs LibRaw).
 
     Returns:
         ConvertResult with output details
     """
     t0 = time.perf_counter()
     iiq_path = Path(iiq_path)
+    pipeline = _resolve_pipeline(pipeline)
 
     if not iiq_path.exists():
         raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
@@ -321,7 +452,7 @@ def convert_iiq(
     if quality == Quality.THUMBNAIL:
         rgb = _extract_thumbnail(iiq_path)
     else:
-        rgb = _demosaic(iiq_path)
+        rgb = _demosaic(iiq_path, pipeline)
 
     if max_dimension and max(rgb.shape[:2]) > max_dimension:
         rgb = _resize_max_dim(rgb, max_dimension)
@@ -434,8 +565,10 @@ def _extract_thumbnail(iiq_path: Path) -> np.ndarray:
     return rgb
 
 
-def _demosaic(iiq_path: Path) -> np.ndarray:
-    """Demosaic IIQ raw data to full-resolution RGB using LibRaw with PPG algorithm."""
+def _demosaic(iiq_path: Path, pipeline: Pipeline = Pipeline.LIBRAW) -> np.ndarray:
+    """Demosaic IIQ raw data to full-resolution RGB."""
+    if pipeline == Pipeline.FAST:
+        return _demosaic_fast(iiq_path)
     try:
         raw = rawpy.imread(str(iiq_path))
     except rawpy.LibRawIOError:
@@ -463,7 +596,7 @@ def _resize_max_dim(rgb: np.ndarray, max_dim: int) -> np.ndarray:
 
 def _convert_one_for_batch(args: tuple) -> ConvertResult:
     """Worker function for multiprocessing batch conversion."""
-    iiq_path, out_path, quality, output_format, compress_quality, max_dimension = args
+    iiq_path, out_path, quality, output_format, compress_quality, max_dimension, pipeline = args
     return convert_iiq(
         iiq_path,
         out_path,
@@ -471,6 +604,7 @@ def _convert_one_for_batch(args: tuple) -> ConvertResult:
         output_format=output_format,
         compress_quality=compress_quality,
         max_dimension=max_dimension,
+        pipeline=pipeline,
     )
 
 
@@ -482,15 +616,18 @@ def batch_convert(
     compress_quality: int = 90,
     max_dimension: int | None = None,
     workers: int | None = None,
+    pipeline: "str | Pipeline" = Pipeline.LIBRAW,
 ) -> list[ConvertResult]:
     """Convert all IIQ files in a directory using multiprocessing.
 
     Args:
         workers: Number of parallel workers. None = auto (min(cpu_count, 8)).
                  Set to 1 for sequential processing.
+        pipeline: Demosaic pipeline — Pipeline.LIBRAW (default) or Pipeline.FAST (~5× faster).
     """
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
+    pipeline = _resolve_pipeline(pipeline)
     output_fmt = _resolve_format(output_format, None)
 
     iiq_files = sorted(input_dir.glob("*.IIQ"))
@@ -514,6 +651,7 @@ def batch_convert(
             output_fmt,
             compress_quality,
             max_dimension,
+            pipeline,
         )
         for f in iiq_files
     ]
@@ -565,18 +703,20 @@ def run_benchmark(iiq_path: str | Path) -> None:
     print(f"File size: {iiq_path.stat().st_size / 1024 / 1024:.1f} MB\n")
 
     approaches = [
-        ("Thumbnail (640x480) JPG", Quality.THUMBNAIL, "jpg", 90, None),
-        ("Full res JPG q=90", Quality.FULL, "jpg", 90, None),
-        ("Full res JPG q=75", Quality.FULL, "jpg", 75, None),
-        ("Full res PNG", Quality.FULL, "png", 90, None),
-        ("Full res TIFF", Quality.FULL, "tiff", 90, None),
+        ("Thumbnail (640x480) JPG",    Quality.THUMBNAIL, "jpg",  90, None, Pipeline.LIBRAW),
+        ("LibRaw PPG  JPG q=90",       Quality.FULL,      "jpg",  90, None, Pipeline.LIBRAW),
+        ("LibRaw PPG  JPG q=75",       Quality.FULL,      "jpg",  75, None, Pipeline.LIBRAW),
+        ("Fast (cv2 EA)  JPG q=90",    Quality.FULL,      "jpg",  90, None, Pipeline.FAST),
+        ("Fast (cv2 EA)  JPG q=75",    Quality.FULL,      "jpg",  75, None, Pipeline.FAST),
+        ("Fast (cv2 EA)  PNG",         Quality.FULL,      "png",  90, None, Pipeline.FAST),
+        ("Fast (cv2 EA)  TIFF",        Quality.FULL,      "tiff", 90, None, Pipeline.FAST),
     ]
 
-    print(f"{'Approach':<30} {'Time':>8} {'Size':>10} {'Resolution':>14}")
-    print("-" * 66)
+    print(f"{'Approach':<35} {'Time':>8} {'Size':>10} {'Resolution':>14}")
+    print("-" * 71)
 
-    for name, qual, fmt, cq, max_dim in approaches:
-        out = Path(f"/tmp/bench_{qual.value}_{fmt}_{cq}{FORMAT_EXTENSIONS[fmt]}")
+    for name, qual, fmt, cq, max_dim, pl in approaches:
+        out = Path(f"/tmp/bench_{qual.value}_{fmt}_{cq}_{pl.value}{FORMAT_EXTENSIONS[fmt]}")
         r = convert_iiq(
             iiq_path,
             out,
@@ -585,9 +725,10 @@ def run_benchmark(iiq_path: str | Path) -> None:
             compress_quality=cq,
             max_dimension=max_dim,
             extract_meta=False,
+            pipeline=pl,
         )
         print(
-            f"{name:<30} {r.elapsed_ms:>7.0f}ms "
+            f"{name:<35} {r.elapsed_ms:>7.0f}ms "
             f"{r.file_size_bytes / 1024 / 1024:>8.1f}MB "
             f"{r.width}x{r.height}"
         )
@@ -607,28 +748,33 @@ def _cli_main() -> None:
         fmt_str = sys.argv[4] if len(sys.argv) > 4 else "jpg"
         cq = int(sys.argv[5]) if len(sys.argv) > 5 else 90
         workers = int(sys.argv[6]) if len(sys.argv) > 6 else None
+        pl = Pipeline.FAST if "--fast" in sys.argv else Pipeline.LIBRAW
         batch_convert(
             input_dir,
             output_dir,
             output_format=fmt_str,
             compress_quality=cq,
             workers=workers,
+            pipeline=pl,
         )
 
     elif len(sys.argv) > 1:
-        result = convert_iiq(sys.argv[1])
-        print(f"Output: {result.output_path}")
-        print(f"Resolution: {result.width}x{result.height}")
-        print(f"Time: {result.elapsed_ms:.0f}ms")
-        print(f"Size: {result.file_size_bytes / 1024 / 1024:.1f}MB")
+        pl = Pipeline.FAST if "--fast" in sys.argv else Pipeline.LIBRAW
+        path_arg = next(a for a in sys.argv[1:] if not a.startswith("--"))
+        result = convert_iiq(path_arg, pipeline=pl)
+        print(f"Output:   {result.output_path}")
+        print(f"Pipeline: {pl.value}")
+        print(f"Res:      {result.width}x{result.height}")
+        print(f"Time:     {result.elapsed_ms:.0f}ms")
+        print(f"Size:     {result.file_size_bytes / 1024 / 1024:.1f}MB")
 
     else:
         print("Usage:")
         print(f"  {sys.argv[0]} benchmark [iiq_path]")
-        print(
-            f"  {sys.argv[0]} batch [in_dir] [out_dir] [jpg|png|tiff] [quality] [workers]"
-        )
-        print(f"  {sys.argv[0]} <file.IIQ>")
+        print(f"  {sys.argv[0]} batch [in_dir] [out_dir] [jpg|png|tiff] [quality] [workers] [--fast]")
+        print(f"  {sys.argv[0]} <file.IIQ> [--fast]")
+        print()
+        print("  --fast   Use fast pipeline (cv2 EA + numba, ~5× faster, visually equivalent)")
         print()
         print("Running benchmark on sample file...")
         print()

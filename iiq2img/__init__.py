@@ -2,6 +2,7 @@
 
 from iiq2img.converter import (
     ConvertResult,
+    Pipeline,
     Quality,
     FORMAT_EXTENSIONS,
     batch_convert,
@@ -21,6 +22,7 @@ from iiq2img.georef import (
 __all__ = [
     "ConvertResult",
     "GeoInfo",
+    "Pipeline",
     "Quality",
     "FORMAT_EXTENSIONS",
     "batch_convert",
