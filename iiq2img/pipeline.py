@@ -104,14 +104,13 @@ def demosaic_fast(iiq_path: Path) -> np.ndarray:
             f"Failed to read IIQ file (corrupt or unreadable): {iiq_path}"
         ) from None
 
-    b16 = raw.raw_image_visible.copy()
     wb = np.array(raw.camera_whitebalance[:3], dtype=np.float32)
     wb /= wb[1]
-    raw.close()
 
-    # Black subtraction + WB on raw Bayer data
+    # Black subtraction + WB on raw Bayer view (skip .copy() — LUT writes to new array)
     lr, lg, lb = _build_wb_luts(wb)
-    b_corr = _fast_wb_lut_bayer(b16, lr, lg, lb)
+    b_corr = _fast_wb_lut_bayer(raw.raw_image_visible, lr, lg, lb)
+    raw.close()  # safe: b_corr is an independent array
 
     # Edge-aware demosaic: RGGB uint16 -> uint16, output is RGB order (not BGR)
     rgb16 = cv2.cvtColor(b_corr, cv2.COLOR_BAYER_RG2BGR_EA)
