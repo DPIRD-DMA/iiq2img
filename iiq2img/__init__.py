@@ -1,5 +1,9 @@
 """iiq2img — Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images."""
 
+from importlib.metadata import version
+
+__version__ = version("iiq2img")
+
 from iiq2img.converter import (
     ConvertResult,
     Pipeline,
