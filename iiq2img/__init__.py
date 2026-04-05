@@ -22,13 +22,16 @@ from iiq2img.georef import (
     write_world_file,
 )
 from iiq2img.metadata import extract_metadata
+from iiq2img.repair import detect_defective_rows, repair_defective_rows
 
 __all__ = [
     "GeoInfo",
     "FORMAT_EXTENSIONS",
     "batch_convert",
     "convert_iiq",
+    "detect_defective_rows",
     "read_iiq",
+    "repair_defective_rows",
     "extract_geo_info",
     "extract_metadata",
     "format_from_path",

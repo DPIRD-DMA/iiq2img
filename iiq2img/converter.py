@@ -270,12 +270,20 @@ def _demosaic(iiq_path: Path, pipeline: str = "fast") -> np.ndarray:
     """Demosaic IIQ raw data to full-resolution RGB."""
     if pipeline == "fast":
         return demosaic_fast(iiq_path)
+
+    from iiq2img.repair import repair_defective_rows
+
     try:
         raw = rawpy.imread(str(iiq_path))
     except rawpy.LibRawIOError:  # type: ignore[attr-defined]
         raise OSError(
             f"Failed to read IIQ file (corrupt or unreadable): {iiq_path}"
         ) from None
+
+    # Repair defective rows on the raw Bayer data before LibRaw postprocess
+    repaired = repair_defective_rows(raw.raw_image_visible)
+    raw.raw_image_visible[:] = repaired
+
     rgb = raw.postprocess(
         demosaic_algorithm=rawpy.DemosaicAlgorithm.PPG,  # type: ignore[attr-defined]
         half_size=False,

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0] — 2026-04-05
+
+### Added
+
+- Defective row detection and repair for raw Bayer data (`repair_defective_rows`, `detect_defective_rows`).
+  Fixes horizontal red/blue stripe artefacts caused by corrupted sensor rows (~3 per image on the iXM-GS120).
+- Repair runs automatically in both fast and libraw pipelines before demosaicing.
+  Can be disabled with `demosaic_fast(path, repair=False)`.
+- New `iiq2img.repair` module with numba-parallel repair kernel.
+- 18 new tests covering detection, repair, edge cases, and real-IIQ integration.
+
+### Performance
+
+- Repair overhead is ~90ms on top of a ~530ms pipeline (~17%).
+- Detection uses vectorised stride-tricks rolling median and int32 row sums for speed.
+
 ## [0.2.0] — 2026-04-05
 
 ### Breaking changes

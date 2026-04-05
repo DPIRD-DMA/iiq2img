@@ -12,6 +12,8 @@ import numba
 import numpy as np
 import rawpy
 
+from iiq2img.repair import repair_defective_rows
+
 _IIQ_BLACK_LEVEL = 1024  # rawpy incorrectly reports 0; true value confirmed empirically
 
 _numba_warmed_up = False
@@ -87,13 +89,13 @@ def _build_gamma_lut(threshold: float) -> np.ndarray:
     return np.clip(gamma * 255, 0, 255).astype(np.uint8)
 
 
-def demosaic_fast(iiq_path: Path) -> np.ndarray:
+def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
     """
     Fast IIQ demosaic: cv2 edge-aware Bayer + numba LUT pipeline (~4.6x vs LibRaw PPG).
 
-    Pipeline: raw Bayer -> black subtraction + WB + full-range scale (numba LUT)
-    -> cv2 EA demosaic -> auto-brightness (0.4% luma clip) -> BT.709 gamma (numba LUT)
-    -> uint8 RGB
+    Pipeline: raw Bayer -> defective pixel/row repair -> black subtraction + WB
+    + full-range scale (numba LUT) -> cv2 EA demosaic -> auto-brightness (0.4%
+    luma clip) -> BT.709 gamma (numba LUT) -> uint8 RGB
     """
     _ensure_numba_warmed_up()
 
@@ -107,9 +109,13 @@ def demosaic_fast(iiq_path: Path) -> np.ndarray:
     wb = np.array(raw.camera_whitebalance[:3], dtype=np.float32)
     wb /= wb[1]
 
+    bayer = raw.raw_image_visible
+    if repair:
+        bayer = repair_defective_rows(bayer)
+
     # Black subtraction + WB on raw Bayer view (skip .copy() — LUT writes to new array)
     lr, lg, lb = _build_wb_luts(wb)
-    b_corr = _fast_wb_lut_bayer(raw.raw_image_visible, lr, lg, lb)
+    b_corr = _fast_wb_lut_bayer(bayer, lr, lg, lb)
     raw.close()  # safe: b_corr is an independent array
 
     # Edge-aware demosaic: RGGB uint16 -> uint16, output is RGB order (not BGR)
