@@ -45,7 +45,16 @@ results = batch_convert("./raw", "./out", workers=8)
 out_path = convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=True)
 ```
 
-`convert_iiq` options: `output_format` (jpg/png/tiff), `compress_quality` (1-100), `max_dimension`, `rotate` (0/90/180/270), `georef`, `extract_meta`, `pipeline`.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `thumbnail` | `False` | Extract embedded JPEG thumbnail instead of converting |
+| `output_format` | `"jpg"` | Output format: `jpg`, `png`, or `tiff` |
+| `compress_quality` | `90` | JPEG/PNG compression quality (1-100) |
+| `max_dimension` | `None` | Downscale longest edge to this size |
+| `rotate` | `0` | Rotate output: `0`, `90`, `180`, `270` |
+| `georef` | `False` | Write georeferenced GeoTIFF (requires `[geo]` extra) |
+| `extract_meta` | `True` | Copy EXIF/GPS/XMP metadata to output |
+| `pipeline` | `"fast"` | Demosaic pipeline: `fast` or `libraw` |
 
 ## CLI
 
