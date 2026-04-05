@@ -115,7 +115,9 @@ def demosaic_fast(iiq_path: Path) -> np.ndarray:
     # Edge-aware demosaic: RGGB uint16 -> uint16, output is RGB order (not BGR)
     rgb16 = cv2.cvtColor(b_corr, cv2.COLOR_BAYER_RG2BGR_EA)
 
-    # Auto-brightness: subsample luma, clip 0.45% of highlights (empirically matched to LibRaw)
+    # Auto-brightness: subsample luma, clip top 0.45% of highlights.
+    # This threshold (0.9955 cumulative) was empirically matched to LibRaw's
+    # default auto-brightness, which clips the brightest ~0.45% of pixels.
     sub = rgb16[::8, ::8].astype(np.float32) / 65535.0
     luma = 0.2126 * sub[:, :, 0] + 0.7152 * sub[:, :, 1] + 0.0722 * sub[:, :, 2]
     hist, edges = np.histogram(luma.ravel(), bins=4096, range=(0.0, 1.0))

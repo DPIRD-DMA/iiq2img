@@ -1,5 +1,6 @@
 """Tests for metadata extraction and injection functions."""
 
+import logging
 import struct
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -379,3 +380,39 @@ class TestInjectMetadataIntoTiff:
             f.write(b"not a tiff")
         _inject_metadata_into_tiff(path, b"Exif\x00\x00", None)
         # Should not raise
+
+
+class TestMetadataLogging:
+    """Verify that silent exception handlers log debug messages."""
+
+    def test_extract_metadata_logs_on_error(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="iiq2img.metadata"):
+            result = extract_metadata("/nonexistent/path.iiq")
+        assert result == {}
+        assert "Failed to extract metadata" in caplog.text
+
+    def test_read_exif_xmp_logs_on_error(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="iiq2img.metadata"):
+            exif, xmp = _read_iiq_exif_and_xmp("/nonexistent/path.iiq")
+        assert exif is None and xmp is None
+        assert "Failed to read EXIF/XMP" in caplog.text
+
+    def test_inject_jpeg_logs_on_error(self, tmp_path, caplog):
+        path = str(tmp_path / "bad.jpg")
+        with open(path, "wb") as f:
+            f.write(b"\xff\xd8")  # minimal JPEG SOI but nothing else
+        # Force an error by making file unwritable after reading
+        with caplog.at_level(logging.DEBUG, logger="iiq2img.metadata"):
+            # This won't error since segments will be empty, so use a bad path
+            _inject_metadata_into_jpeg("/nonexistent.jpg", b"Exif\x00\x00test", None)
+        assert "Failed to inject metadata into JPEG" in caplog.text
+
+    def test_inject_png_logs_on_error(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="iiq2img.metadata"):
+            _inject_metadata_into_png("/nonexistent.png", {"key": "val"})
+        assert "Failed to inject metadata into PNG" in caplog.text
+
+    def test_inject_tiff_logs_on_error(self, caplog):
+        with caplog.at_level(logging.DEBUG, logger="iiq2img.metadata"):
+            _inject_metadata_into_tiff("/nonexistent.tif", b"Exif\x00\x00", None)
+        assert "Failed to inject metadata into TIFF" in caplog.text

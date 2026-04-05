@@ -1,9 +1,11 @@
 """Tests for the CLI entry point."""
 
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
-from iiq2img import ConvertResult, Pipeline
+import pytest
+
 from iiq2img.converter import _cli_main
 
 
@@ -39,7 +41,7 @@ class TestCliMain:
             output_format="png",
             compress_quality=75,
             workers=4,
-            pipeline=Pipeline.LIBRAW,
+            pipeline="fast",
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -52,13 +54,13 @@ class TestCliMain:
             output_format="jpg",
             compress_quality=90,
             workers=None,
-            pipeline=Pipeline.LIBRAW,
+            pipeline="fast",
         )
 
     @patch("iiq2img.converter.batch_convert")
-    def test_batch_fast_flag(self, mock_batch):
+    def test_batch_libraw_flag(self, mock_batch):
         with patch.object(
-            sys, "argv", ["iiq2img", "batch", "/in", "/out", "jpg", "90", "4", "--fast"]
+            sys, "argv", ["iiq2img", "batch", "/in", "/out", "jpg", "90", "4", "--libraw"]
         ):
             _cli_main()
         mock_batch.assert_called_once_with(
@@ -67,36 +69,72 @@ class TestCliMain:
             output_format="jpg",
             compress_quality=90,
             workers=4,
-            pipeline=Pipeline.FAST,
+            pipeline="libraw",
         )
 
     @patch("iiq2img.converter.convert_iiq")
     def test_single_file_conversion(self, mock_convert, capsys):
-        mock_convert.return_value = ConvertResult(
-            output_path="/tmp/out.jpg",
-            width=1000,
-            height=500,
-            elapsed_ms=3400.0,
-            file_size_bytes=2_000_000,
-        )
+        out_path = Path("/tmp/out.jpg")
+        out_path_mock = patch.object(Path, "stat")
+        mock_convert.return_value = out_path
         with patch.object(sys, "argv", ["iiq2img", "photo.IIQ"]):
-            _cli_main()
-        mock_convert.assert_called_once_with("photo.IIQ", pipeline=Pipeline.LIBRAW)
+            with patch.object(Path, "stat") as mock_stat:
+                mock_stat.return_value.st_size = 2_000_000
+                _cli_main()
+        mock_convert.assert_called_once_with("photo.IIQ", pipeline="fast")
         output = capsys.readouterr().out
         assert "/tmp/out.jpg" in output
-        assert "1000x500" in output
 
     @patch("iiq2img.converter.convert_iiq")
-    def test_single_file_fast_flag(self, mock_convert, capsys):
-        mock_convert.return_value = ConvertResult(
-            output_path="/tmp/out.jpg",
-            width=1000,
-            height=500,
-            elapsed_ms=600.0,
-            file_size_bytes=2_000_000,
-        )
-        with patch.object(sys, "argv", ["iiq2img", "photo.IIQ", "--fast"]):
-            _cli_main()
-        mock_convert.assert_called_once_with("photo.IIQ", pipeline=Pipeline.FAST)
+    def test_single_file_libraw_flag(self, mock_convert, capsys):
+        mock_convert.return_value = Path("/tmp/out.jpg")
+        with patch.object(sys, "argv", ["iiq2img", "photo.IIQ", "--libraw"]):
+            with patch.object(Path, "stat") as mock_stat:
+                mock_stat.return_value.st_size = 2_000_000
+                _cli_main()
+        mock_convert.assert_called_once_with("photo.IIQ", pipeline="libraw")
         output = capsys.readouterr().out
+        assert "Pipeline: libraw" in output
+
+    def test_flags_only_no_positional_arg(self, capsys):
+        """CLI with only flags and no file path should exit with error."""
+        with patch.object(sys, "argv", ["iiq2img", "--fast"]):
+            with pytest.raises(SystemExit):
+                _cli_main()
+
+    def test_usage_shows_all_subcommands(self, capsys):
+        """Usage output should document benchmark, batch, and single-file modes."""
+        with patch.object(sys, "argv", ["iiq2img"]):
+            with patch("iiq2img.converter.run_benchmark"):
+                _cli_main()
+        output = capsys.readouterr().out
+        assert "benchmark" in output
+        assert "batch" in output
+        assert "--libraw" in output
+
+    @patch("iiq2img.converter.convert_iiq")
+    def test_single_file_shows_timing(self, mock_convert, capsys):
+        """Single file conversion should print timing info."""
+        mock_convert.return_value = Path("/tmp/out.jpg")
+        with patch.object(sys, "argv", ["iiq2img", "photo.IIQ"]):
+            with patch.object(Path, "stat") as mock_stat:
+                mock_stat.return_value.st_size = 5_000_000
+                _cli_main()
+        output = capsys.readouterr().out
+        assert "Time:" in output
+        assert "Size:" in output
         assert "Pipeline: fast" in output
+
+    @patch("iiq2img.converter.batch_convert")
+    def test_batch_partial_args(self, mock_batch):
+        """Batch with only input/output dirs should use defaults for the rest."""
+        with patch.object(sys, "argv", ["iiq2img", "batch", "/in", "/out"]):
+            _cli_main()
+        mock_batch.assert_called_once_with(
+            "/in",
+            "/out",
+            output_format="jpg",
+            compress_quality=90,
+            workers=None,
+            pipeline="fast",
+        )

@@ -7,17 +7,20 @@ and sensor geometry, then writes:
   - Standalone function to georeference any existing image
 """
 
+from __future__ import annotations
+
 import math
 import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
-import rasterio
-from rasterio.crs import CRS
-from rasterio.transform import Affine
+
+if TYPE_CHECKING:
+    from rasterio.transform import Affine
 
 # iXM-GS120 sensor: 3.45 μm pixel pitch
 PIXEL_SIZE_MM = 0.00345  # mm per pixel
@@ -135,11 +138,7 @@ def extract_geo_info(
     lat = _parse_dms_coordinate(lat_str)
     lon = _parse_dms_coordinate(lon_str)
     alt_agl = _parse_rational(alt_agl_str) if alt_agl_str else 100.0
-    yaw = float(yaw_str) if yaw_str else 0.0
-
-    # Normalize yaw from IMU format if needed (e.g. 2366373/10000)
-    if yaw_str and "/" in yaw_str:
-        yaw = _parse_rational(yaw_str)
+    yaw = _parse_rational(yaw_str) if yaw_str else 0.0
 
     return GeoInfo(
         latitude=lat,
@@ -182,6 +181,8 @@ def compute_transform(geo: GeoInfo) -> Affine:
     ul_y = geo.latitude + (geo.image_height / 2.0) * pixel_deg_y
 
     # No rotation: x increases right, y increases down (negative)
+    from rasterio.transform import Affine
+
     return Affine(pixel_deg_x, 0.0, ul_x, 0.0, -pixel_deg_y, ul_y)
 
 
@@ -245,6 +246,9 @@ def write_geotiff(
     Returns:
         Path to the created GeoTIFF
     """
+    import rasterio
+    from rasterio.crs import CRS
+
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Cannot read image: {image_path}")

@@ -1,10 +1,13 @@
 """EXIF and XMP metadata extraction and injection for IIQ output images."""
 
+import logging
 import struct
 from pathlib import Path
 
 from PIL import Image as PILImage
 from PIL.ExifTags import TAGS
+
+logger = logging.getLogger(__name__)
 
 
 def extract_metadata(iiq_path: str | Path) -> dict[str, str]:
@@ -12,6 +15,7 @@ def extract_metadata(iiq_path: str | Path) -> dict[str, str]:
 
     Returns a dict of human-readable tag names to string values,
     plus raw 'xmp' key containing the full XMP XML if present.
+    Returns an empty dict on any error (logged at DEBUG level).
     """
     iiq_path = Path(iiq_path)
     try:
@@ -29,6 +33,7 @@ def extract_metadata(iiq_path: str | Path) -> dict[str, str]:
 
         return meta
     except Exception:
+        logger.debug("Failed to extract metadata from %s", iiq_path, exc_info=True)
         return {}
 
 
@@ -36,6 +41,7 @@ def _read_iiq_exif_and_xmp(iiq_path: str | Path) -> tuple[bytes | None, bytes | 
     """Read EXIF bytes and XMP packet from IIQ for embedding in output.
 
     Uses Exif.tobytes() directly instead of dummy JPEG roundtrip.
+    Returns (None, None) on any error (logged at DEBUG level).
     """
     try:
         PILImage.MAX_IMAGE_PIXELS = None
@@ -75,6 +81,7 @@ def _read_iiq_exif_and_xmp(iiq_path: str | Path) -> tuple[bytes | None, bytes | 
 
         return exif_bytes, xmp_bytes
     except Exception:
+        logger.debug("Failed to read EXIF/XMP from %s", iiq_path, exc_info=True)
         return None, None
 
 
@@ -97,7 +104,7 @@ def copy_metadata_to_output(
 def _inject_metadata_into_jpeg(
     jpeg_path: str | Path, exif_bytes: bytes | None, xmp_bytes: bytes | None
 ) -> None:
-    """Inject EXIF APP1 and XMP APP1 segments into a JPEG file."""
+    """Inject EXIF APP1 and XMP APP1 segments into a JPEG file. Errors are logged at DEBUG level."""
     try:
         jpeg_path = Path(jpeg_path)
         jpeg_data = jpeg_path.read_bytes()
@@ -124,11 +131,11 @@ def _inject_metadata_into_jpeg(
         if segments:
             jpeg_path.write_bytes(b"\xff\xd8" + segments + jpeg_data[2:])
     except Exception:
-        pass
+        logger.debug("Failed to inject metadata into JPEG %s", jpeg_path, exc_info=True)
 
 
 def _inject_metadata_into_png(png_path: str | Path, metadata: dict[str, str]) -> None:
-    """Add metadata as PNG tEXt chunks using Pillow."""
+    """Add metadata as PNG tEXt chunks using Pillow. Errors are logged at DEBUG level."""
     try:
         from PIL.PngImagePlugin import PngInfo
 
@@ -140,13 +147,13 @@ def _inject_metadata_into_png(png_path: str | Path, metadata: dict[str, str]) ->
             pnginfo.add_text(k, str(v))
         img.save(png_path, pnginfo=pnginfo)
     except Exception:
-        pass
+        logger.debug("Failed to inject metadata into PNG %s", png_path, exc_info=True)
 
 
 def _inject_metadata_into_tiff(
     tiff_path: str | Path, exif_bytes: bytes | None, xmp_bytes: bytes | None
 ) -> None:
-    """Re-save TIFF with EXIF metadata using Pillow."""
+    """Re-save TIFF with EXIF metadata using Pillow. Errors are logged at DEBUG level."""
     try:
         img = PILImage.open(tiff_path)
         save_kwargs = {}
@@ -155,4 +162,4 @@ def _inject_metadata_into_tiff(
         if save_kwargs:
             img.save(tiff_path, **save_kwargs)  # type: ignore[arg-type]
     except Exception:
-        pass
+        logger.debug("Failed to inject metadata into TIFF %s", tiff_path, exc_info=True)

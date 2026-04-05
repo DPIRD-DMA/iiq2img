@@ -5,11 +5,9 @@ from importlib.metadata import version
 __version__ = version("iiq2img")
 
 from iiq2img.converter import (
-    ConvertResult,
-    Pipeline,
-    Quality,
     batch_convert,
     convert_iiq,
+    read_iiq,
 )
 from iiq2img.encode import (
     FORMAT_EXTENSIONS,
@@ -26,13 +24,11 @@ from iiq2img.georef import (
 from iiq2img.metadata import extract_metadata
 
 __all__ = [
-    "ConvertResult",
     "GeoInfo",
-    "Pipeline",
-    "Quality",
     "FORMAT_EXTENSIONS",
     "batch_convert",
     "convert_iiq",
+    "read_iiq",
     "extract_geo_info",
     "extract_metadata",
     "format_from_path",

@@ -4,10 +4,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from iiq2img import (
-    ConvertResult,
-    batch_convert,
-)
+from iiq2img import batch_convert
 
 
 class TestBatchConvert:
@@ -17,13 +14,7 @@ class TestBatchConvert:
             (tmp_path / name).touch()
         out_dir = str(tmp_path / "output")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.jpg",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.jpg")
 
         results = batch_convert(str(tmp_path), out_dir, workers=1)
         assert len(results) == 3
@@ -40,13 +31,7 @@ class TestBatchConvert:
         (tmp_path / "test.IIQ").touch()
         out_dir = str(tmp_path / "output")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.png",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.png")
 
         batch_convert(
             str(tmp_path),
@@ -71,13 +56,7 @@ class TestBatchConvertEdgeCases:
             (tmp_path / name).touch()
         out_dir = str(tmp_path / "output")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.jpg",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.jpg")
 
         results = batch_convert(str(tmp_path), out_dir, workers=1)
         assert len(results) == 2
@@ -87,13 +66,7 @@ class TestBatchConvertEdgeCases:
         (tmp_path / "test.IIQ").touch()
         out_dir = str(tmp_path / "new_output_dir")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.jpg",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.jpg")
 
         batch_convert(str(tmp_path), out_dir, workers=1)
         assert os.path.isdir(out_dir)
@@ -103,13 +76,7 @@ class TestBatchConvertEdgeCases:
         (tmp_path / "photo.IIQ").touch()
         out_dir = str(tmp_path / "output")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.png",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.png")
 
         batch_convert(str(tmp_path), out_dir, output_format="png", workers=1)
         call_args = mock_convert.call_args
@@ -131,13 +98,7 @@ class TestBatchConvertEdgeCases:
         def track_call(*args, **kwargs):
             iiq_path = args[0] if args else kwargs.get("iiq_path", "")
             call_order.append(Path(iiq_path).name)
-            return ConvertResult(
-                output_path="out.jpg",
-                width=100,
-                height=100,
-                elapsed_ms=10.0,
-                file_size_bytes=1024,
-            )
+            return Path("out.jpg")
 
         mock_convert.side_effect = track_call
         batch_convert(str(tmp_path), out_dir, workers=1)
@@ -151,13 +112,7 @@ class TestBatchConvertEdgeCases:
         (tmp_path / "other.jpg").touch()
         out_dir = str(tmp_path / "output")
 
-        mock_convert.return_value = ConvertResult(
-            output_path="out.jpg",
-            width=100,
-            height=100,
-            elapsed_ms=10.0,
-            file_size_bytes=1024,
-        )
+        mock_convert.return_value = Path("out.jpg")
 
         results = batch_convert(str(tmp_path), out_dir, workers=1)
         assert len(results) == 1

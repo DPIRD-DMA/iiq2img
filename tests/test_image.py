@@ -135,6 +135,30 @@ class TestEncodeImageEdgeCases:
         assert os.path.exists(fast)
         assert os.path.exists(slow)
 
+    def test_png_mid_quality(self, tmp_path):
+        """Quality 50 should produce a valid PNG with moderate compression."""
+        bgr = np.random.randint(0, 255, (50, 50, 3), dtype=np.uint8)
+        out = str(tmp_path / "mid.png")
+        _encode_image(bgr, out, "png", 50)
+        assert os.path.exists(out)
+        with open(out, "rb") as f:
+            assert f.read(8) == b"\x89PNG\r\n\x1a\n"
+
+    def test_tiff_ignores_quality(self, tmp_path):
+        """TIFF should encode regardless of quality value."""
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        out = str(tmp_path / "test.tif")
+        _encode_image(bgr, out, "tiff", 1)
+        assert os.path.exists(out)
+        assert os.path.getsize(out) > 0
+
+    def test_unknown_format_no_crash(self, tmp_path):
+        """Unknown format should silently do nothing (no file created)."""
+        bgr = np.zeros((50, 50, 3), dtype=np.uint8)
+        out = str(tmp_path / "test.bmp")
+        _encode_image(bgr, out, "bmp", 90)
+        assert not os.path.exists(out)
+
     def test_single_pixel_image(self, tmp_path):
         bgr = np.array([[[255, 0, 0]]], dtype=np.uint8)
         for fmt, ext in [

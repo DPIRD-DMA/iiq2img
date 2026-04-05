@@ -1,10 +1,10 @@
 """
 Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images.
 
-Two demosaic pipelines:
-  - LIBRAW: LibRaw PPG demosaic — accurate reference, ~2.9s per image.
+Two demosaic pipelines (default: fast):
   - FAST:   cv2 edge-aware demosaic + BT.709 gamma + numba parallel LUTs.
             ~3x faster end-to-end (~550ms), mean pixel diff ~6.5/255 vs LibRaw.
+  - LIBRAW: LibRaw PPG demosaic — accurate reference, ~2.9s per image.
 
 Supports output formats: JPEG, PNG, TIFF.
 Retains all EXIF/GPS/XMP metadata from the original IIQ file.
@@ -16,8 +16,6 @@ import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
 import cv2
@@ -34,74 +32,110 @@ from iiq2img.metadata import copy_metadata_to_output, extract_metadata
 from iiq2img.pipeline import demosaic_fast
 
 
-class Quality(Enum):
-    THUMBNAIL = "thumbnail"  # 640x480 embedded bitmap, ~1ms
-    FULL = "full"  # full-res (12768x9564), ~2.7s
+_VALID_PIPELINES = ("libraw", "fast")
+_VALID_ROTATIONS = (0, 90, 180, 270, 360)
 
 
-class Pipeline(Enum):
-    LIBRAW = "libraw"  # LibRaw PPG demosaic — accurate, ~2.8s, default
-    FAST = "fast"  # cv2 EA + numba LUT — ~3x faster end-to-end, visually equivalent
-
-
-def _resolve_pipeline(value: "str | Pipeline") -> Pipeline:
-    if isinstance(value, Pipeline):
-        return value
-    try:
-        return Pipeline(value.lower())
-    except ValueError:
+def _resolve_pipeline(value: str) -> str:
+    """Validate and normalise a pipeline name to lowercase."""
+    v = value.lower()
+    if v not in _VALID_PIPELINES:
         raise ValueError(
-            f"Unknown pipeline: {value!r}. Expected one of: 'libraw', 'fast'"
-        ) from None
+            f"Unknown pipeline: {value!r}. Expected one of: {', '.join(_VALID_PIPELINES)!r}"
+        )
+    return v
 
 
-@dataclass
-class ConvertResult:
-    output_path: Path
-    width: int
-    height: int
-    elapsed_ms: float
-    file_size_bytes: int
-    metadata: dict[str, str] = field(default_factory=dict)
+def _resolve_rotate(value: int) -> int:
+    """Validate and normalise a rotation angle. Returns 0, 90, 180, or 270 (360 maps to 0)."""
+    if value not in _VALID_ROTATIONS:
+        raise ValueError(
+            f"Invalid rotation: {value}°. Must be one of: 0, 90, 180, 270 (360 is treated as 0)"
+        )
+    return value % 360
+
+
+def read_iiq(
+    iiq_path: str | Path,
+    thumbnail: bool = False,
+    max_dimension: int | None = None,
+    rotate: int = 0,
+    pipeline: str = "fast",
+) -> np.ndarray:
+    """
+    Read a Phase One IIQ raw file and return it as an RGB numpy array.
+
+    Args:
+        iiq_path: Path to .IIQ file
+        thumbnail: If True, extract the embedded 640x480 thumbnail instead of full demosaic.
+        max_dimension: If set, resize longest edge to this value
+        rotate: Rotation angle in degrees — 0, 90, 180, 270 (for different camera mounts).
+                360 is accepted and treated as 0.
+        pipeline: Demosaic pipeline — 'fast' (~3x faster, default) or 'libraw' (accurate, ~2.8s).
+
+    Returns:
+        np.ndarray with shape (H, W, 3), dtype uint8, in RGB order.
+    """
+    iiq_path = Path(iiq_path)
+    pipeline = _resolve_pipeline(pipeline)
+    rotate = _resolve_rotate(rotate)
+
+    if not iiq_path.exists():
+        raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
+    if not iiq_path.is_file():
+        raise ValueError(f"Expected a file, got a directory: {iiq_path}")
+    if iiq_path.suffix.lower() != ".iiq":
+        raise ValueError(f"Expected a .IIQ file, got '{iiq_path.suffix}': {iiq_path}")
+
+    if thumbnail:
+        rgb = _extract_thumbnail(iiq_path)
+    else:
+        rgb = _demosaic(iiq_path, pipeline)
+
+    if max_dimension and max(rgb.shape[:2]) > max_dimension:
+        rgb = resize_max_dim(rgb, max_dimension)
+
+    if rotate:
+        rgb = np.rot90(rgb, rotate // 90)
+
+    return rgb
 
 
 def convert_iiq(
     iiq_path: str | Path,
     output_path: str | Path | None = None,
-    quality: Quality = Quality.FULL,
+    thumbnail: bool = False,
     output_format: str | None = None,
     compress_quality: int = 90,
     max_dimension: int | None = None,
     extract_meta: bool = True,
     georef: bool = False,
-    rotate_180: bool = False,
-    pipeline: "str | Pipeline" = Pipeline.LIBRAW,
-) -> ConvertResult:
+    rotate: int = 0,
+    pipeline: str = "fast",
+) -> Path:
     """
     Convert a Phase One IIQ raw file to JPEG, PNG, or TIFF.
 
     Args:
         iiq_path: Path to .IIQ file
         output_path: Output path. If None, uses same name with new extension.
-        quality: Demosaic quality preset (THUMBNAIL or FULL)
+        thumbnail: If True, extract the embedded 640x480 thumbnail instead of full demosaic.
         output_format: Output format string ('jpg', 'png', 'tif'),
                        or None to infer from output_path extension (default: 'jpg')
         compress_quality: Compression quality 1-100 (JPEG quality / PNG compression)
         max_dimension: If set, resize longest edge to this value
         extract_meta: Whether to extract and retain EXIF metadata
         georef: If True, georeference the output (world file for JPEG/PNG, GeoTIFF for TIFF)
-        rotate_180: If True, rotate the image 180 degrees (for inverted-mount sensors)
-        pipeline: Demosaic pipeline to use (Pipeline.LIBRAW or Pipeline.FAST).
-                  LIBRAW uses LibRaw PPG — accurate, ~2.8s.
-                  FAST uses cv2 edge-aware demosaic + numba LUTs — ~3x faster end-to-end,
-                  visually equivalent (mean pixel diff ~6.5/255 vs LibRaw).
+        rotate: Rotation angle in degrees — 0, 90, 180, 270 (for different camera mounts).
+                360 is accepted and treated as 0.
+        pipeline: Demosaic pipeline — 'fast' (~3x faster, default) or 'libraw' (accurate, ~2.8s).
 
     Returns:
-        ConvertResult with output details
+        Path to the output file.
     """
-    t0 = time.perf_counter()
     iiq_path = Path(iiq_path)
     pipeline = _resolve_pipeline(pipeline)
+    rotate = _resolve_rotate(rotate)
 
     if not iiq_path.exists():
         raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
@@ -123,7 +157,7 @@ def convert_iiq(
     need_meta = extract_meta or georef
     metadata = extract_metadata(iiq_path) if need_meta else {}
 
-    if quality == Quality.THUMBNAIL:
+    if thumbnail:
         rgb = _extract_thumbnail(iiq_path)
     else:
         rgb = _demosaic(iiq_path, pipeline)
@@ -131,8 +165,8 @@ def convert_iiq(
     if max_dimension and max(rgb.shape[:2]) > max_dimension:
         rgb = resize_max_dim(rgb, max_dimension)
 
-    if rotate_180:
-        rgb = np.rot90(rgb, 2)
+    if rotate:
+        rgb = np.rot90(rgb, rotate // 90)
 
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     h, w = rgb.shape[:2]
@@ -150,17 +184,7 @@ def convert_iiq(
     if georef and not is_geotiff:
         _apply_georef(out_path, metadata, w, h)
 
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    file_size = out_path.stat().st_size
-
-    return ConvertResult(
-        output_path=out_path,
-        width=w,
-        height=h,
-        elapsed_ms=elapsed_ms,
-        file_size_bytes=file_size,
-        metadata=metadata,
-    )
+    return out_path
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -225,7 +249,7 @@ def _write_geotiff(
 
 
 def _extract_thumbnail(iiq_path: Path) -> np.ndarray:
-    """Extract embedded thumbnail bitmap (~640x480, ~1ms)."""
+    """Extract embedded thumbnail (~640x480, ~1ms). Handles BITMAP and JPEG formats."""
     raw = rawpy.imread(str(iiq_path))
     thumb = raw.extract_thumb()
     if thumb.format == rawpy.ThumbFormat.BITMAP:  # type: ignore[attr-defined]
@@ -242,9 +266,9 @@ def _extract_thumbnail(iiq_path: Path) -> np.ndarray:
     return rgb
 
 
-def _demosaic(iiq_path: Path, pipeline: Pipeline = Pipeline.LIBRAW) -> np.ndarray:
+def _demosaic(iiq_path: Path, pipeline: str = "fast") -> np.ndarray:
     """Demosaic IIQ raw data to full-resolution RGB."""
-    if pipeline == Pipeline.FAST:
+    if pipeline == "fast":
         return demosaic_fast(iiq_path)
     try:
         raw = rawpy.imread(str(iiq_path))
@@ -266,12 +290,14 @@ def _demosaic(iiq_path: Path, pipeline: Pipeline = Pipeline.LIBRAW) -> np.ndarra
 # ── Batch conversion ─────────────────────────────────────────────────────────
 
 
-def _convert_one_for_batch(args: tuple) -> ConvertResult:
+def _convert_one_for_batch(
+    args: tuple[str, str, bool, str, int, int | None, str],
+) -> Path:
     """Worker function for multiprocessing batch conversion."""
     (
         iiq_path,
         out_path,
-        quality,
+        thumbnail,
         output_format,
         compress_quality,
         max_dimension,
@@ -280,7 +306,7 @@ def _convert_one_for_batch(args: tuple) -> ConvertResult:
     return convert_iiq(
         iiq_path,
         out_path,
-        quality=quality,
+        thumbnail=thumbnail,
         output_format=output_format,
         compress_quality=compress_quality,
         max_dimension=max_dimension,
@@ -291,19 +317,19 @@ def _convert_one_for_batch(args: tuple) -> ConvertResult:
 def batch_convert(
     input_dir: str | Path,
     output_dir: str | Path,
-    quality: Quality = Quality.FULL,
+    thumbnail: bool = False,
     output_format: str = "jpg",
     compress_quality: int = 90,
     max_dimension: int | None = None,
     workers: int | None = None,
-    pipeline: "str | Pipeline" = Pipeline.LIBRAW,
-) -> list[ConvertResult]:
+    pipeline: str = "fast",
+) -> list[Path]:
     """Convert all IIQ files in a directory using multiprocessing.
 
     Args:
         workers: Number of parallel workers. None = auto (min(cpu_count, 8)).
                  Set to 1 for sequential processing.
-        pipeline: Demosaic pipeline — Pipeline.LIBRAW (default) or Pipeline.FAST (~3x faster end-to-end).
+        pipeline: Demosaic pipeline — 'fast' (default, ~3x faster) or 'libraw' (accurate).
     """
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
@@ -327,7 +353,7 @@ def batch_convert(
         (
             str(f),
             str(output_dir / (f.stem + ext)),
-            quality,
+            thumbnail,
             output_fmt,
             compress_quality,
             max_dimension,
@@ -339,17 +365,14 @@ def batch_convert(
     from tqdm.auto import tqdm
 
     total_t0 = time.perf_counter()
-    results: list[ConvertResult] = []
+    results: list[Path] = []
     pbar = tqdm(total=len(tasks), unit="img")
 
     if workers <= 1:
         for task_args in tasks:
             result = _convert_one_for_batch(task_args)
             results.append(result)
-            pbar.set_postfix_str(
-                f"{Path(task_args[0]).stem} {result.width}x{result.height} "
-                f"{result.elapsed_ms:.0f}ms {result.file_size_bytes / 1024 / 1024:.1f}MB"
-            )
+            pbar.set_postfix_str(Path(task_args[0]).stem)
             pbar.update(1)
     else:
         mp_ctx = multiprocessing.get_context("spawn")
@@ -358,11 +381,7 @@ def batch_convert(
             for future in as_completed(futures):
                 result = future.result()
                 results.append(result)
-                pbar.set_postfix_str(
-                    f"{result.output_path.stem} {result.width}x{result.height} "
-                    f"{result.elapsed_ms:.0f}ms "
-                    f"{result.file_size_bytes / 1024 / 1024:.1f}MB"
-                )
+                pbar.set_postfix_str(result.stem)
                 pbar.update(1)
 
     pbar.close()
@@ -385,44 +404,41 @@ def run_benchmark(iiq_path: str | Path) -> None:
     print(f"Benchmarking: {iiq_path}")
     print(f"File size: {iiq_path.stat().st_size / 1024 / 1024:.1f} MB\n")
 
+    # (label, thumbnail, format, compress_quality, max_dim, pipeline)
     approaches = [
-        (
-            "Thumbnail (640x480) JPG",
-            Quality.THUMBNAIL,
-            "jpg",
-            90,
-            None,
-            Pipeline.LIBRAW,
-        ),
-        ("LibRaw PPG  JPG q=90", Quality.FULL, "jpg", 90, None, Pipeline.LIBRAW),
-        ("LibRaw PPG  JPG q=75", Quality.FULL, "jpg", 75, None, Pipeline.LIBRAW),
-        ("Fast (cv2 EA)  JPG q=90", Quality.FULL, "jpg", 90, None, Pipeline.FAST),
-        ("Fast (cv2 EA)  JPG q=75", Quality.FULL, "jpg", 75, None, Pipeline.FAST),
-        ("Fast (cv2 EA)  PNG", Quality.FULL, "png", 90, None, Pipeline.FAST),
-        ("Fast (cv2 EA)  TIFF", Quality.FULL, "tiff", 90, None, Pipeline.FAST),
+        ("Thumbnail (640x480) JPG", True, "jpg", 90, None, "libraw"),
+        ("LibRaw PPG  JPG q=90", False, "jpg", 90, None, "libraw"),
+        ("LibRaw PPG  JPG q=75", False, "jpg", 75, None, "libraw"),
+        ("Fast (cv2 EA)  JPG q=90", False, "jpg", 90, None, "fast"),
+        ("Fast (cv2 EA)  JPG q=75", False, "jpg", 75, None, "fast"),
+        ("Fast (cv2 EA)  PNG", False, "png", 90, None, "fast"),
+        ("Fast (cv2 EA)  TIFF", False, "tiff", 90, None, "fast"),
     ]
 
-    print(f"{'Approach':<35} {'Time':>8} {'Size':>10} {'Resolution':>14}")
-    print("-" * 71)
+    print(f"{'Approach':<35} {'Time':>8} {'Size':>10}")
+    print("-" * 57)
 
-    for name, qual, fmt, cq, max_dim, pl in approaches:
+    for name, thumb, fmt, cq, max_dim, pl in approaches:
+        tag = "thumb" if thumb else pl
         out = Path(
-            f"/tmp/bench_{qual.value}_{fmt}_{cq}_{pl.value}{FORMAT_EXTENSIONS[fmt]}"
+            f"/tmp/bench_{tag}_{fmt}_{cq}{FORMAT_EXTENSIONS[fmt]}"
         )
-        r = convert_iiq(
+        t0 = time.perf_counter()
+        convert_iiq(
             iiq_path,
             out,
-            quality=qual,
+            thumbnail=thumb,
             output_format=fmt,
             compress_quality=cq,
             max_dimension=max_dim,
             extract_meta=False,
             pipeline=pl,
         )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        file_size = out.stat().st_size
         print(
-            f"{name:<35} {r.elapsed_ms:>7.0f}ms "
-            f"{r.file_size_bytes / 1024 / 1024:>8.1f}MB "
-            f"{r.width}x{r.height}"
+            f"{name:<35} {elapsed_ms:>7.0f}ms "
+            f"{file_size / 1024 / 1024:>8.1f}MB"
         )
 
 
@@ -440,7 +456,7 @@ def _cli_main() -> None:
         fmt_str = sys.argv[4] if len(sys.argv) > 4 else "jpg"
         cq = int(sys.argv[5]) if len(sys.argv) > 5 else 90
         workers = int(sys.argv[6]) if len(sys.argv) > 6 else None
-        pl = Pipeline.FAST if "--fast" in sys.argv else Pipeline.LIBRAW
+        pl = "libraw" if "--libraw" in sys.argv else "fast"
         batch_convert(
             input_dir,
             output_dir,
@@ -451,25 +467,31 @@ def _cli_main() -> None:
         )
 
     elif len(sys.argv) > 1:
-        pl = Pipeline.FAST if "--fast" in sys.argv else Pipeline.LIBRAW
-        path_arg = next(a for a in sys.argv[1:] if not a.startswith("--"))
-        result = convert_iiq(path_arg, pipeline=pl)
-        print(f"Output:   {result.output_path}")
-        print(f"Pipeline: {pl.value}")
-        print(f"Res:      {result.width}x{result.height}")
-        print(f"Time:     {result.elapsed_ms:.0f}ms")
-        print(f"Size:     {result.file_size_bytes / 1024 / 1024:.1f}MB")
+        pl = "libraw" if "--libraw" in sys.argv else "fast"
+        path_arg = next(
+            (a for a in sys.argv[1:] if not a.startswith("--")), None
+        )
+        if path_arg is None:
+            print(f"Error: no IIQ file specified. Usage: {sys.argv[0]} <file.IIQ>")
+            sys.exit(1)
+        t0 = time.perf_counter()
+        out_path = convert_iiq(path_arg, pipeline=pl)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        print(f"Output:   {out_path}")
+        print(f"Pipeline: {pl}")
+        print(f"Time:     {elapsed_ms:.0f}ms")
+        print(f"Size:     {out_path.stat().st_size / 1024 / 1024:.1f}MB")
 
     else:
         print("Usage:")
         print(f"  {sys.argv[0]} benchmark [iiq_path]")
         print(
-            f"  {sys.argv[0]} batch [in_dir] [out_dir] [jpg|png|tiff] [quality] [workers] [--fast]"
+            f"  {sys.argv[0]} batch [in_dir] [out_dir] [jpg|png|tiff] [quality] [workers] [--libraw]"
         )
-        print(f"  {sys.argv[0]} <file.IIQ> [--fast]")
+        print(f"  {sys.argv[0]} <file.IIQ> [--libraw]")
         print()
         print(
-            "  --fast   Use fast pipeline (cv2 EA + numba, ~3x faster end-to-end, visually equivalent)"
+            "  --libraw   Use LibRaw PPG pipeline (accurate reference, ~3x slower than default fast pipeline)"
         )
         print()
         print("Running benchmark on sample file...")

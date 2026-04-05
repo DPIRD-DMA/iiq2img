@@ -1,0 +1,29 @@
+{
+    "cSpell.words": [
+        "aerialgps",
+        "Exif",
+        "figsize",
+        "frombuffer",
+        "georef",
+        "geotiff",
+        "getexif",
+        "GPSIMU",
+        "imdecode",
+        "imread",
+        "imshow",
+        "IMWRITE",
+        "LIBRAW",
+        "luma",
+        "luts",
+        "njit",
+        "normalise",
+        "pbar",
+        "pnginfo",
+        "prange",
+        "rawpy",
+        "RGGB",
+        "tobytes",
+        "whitebalance",
+        "YCBCR"
+    ]
+}

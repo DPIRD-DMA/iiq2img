@@ -1,17 +1,19 @@
 [project]
 name = "iiq2img"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
-    "numba>=0.65.0",
+    "numba>=0.60.0",
     "opencv-python-headless>=4.8",
     "pillow>=10.0",
-    "rasterio>=1.3",
     "rawpy>=0.19",
     "tqdm>=4.67.3",
 ]
+
+[project.optional-dependencies]
+geo = ["rasterio>=1.3"]
 
 [project.scripts]
 iiq2img = "iiq2img.converter:_cli_main"
@@ -29,6 +31,7 @@ ignore_missing_imports = true
 [dependency-groups]
 dev = [
     "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
     "mypy>=1.19",
     "pytest>=9.0.2",
     "ruff>=0.15.8",
