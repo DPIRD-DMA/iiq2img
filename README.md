@@ -6,10 +6,10 @@ Fast converter for **Phase One iXM-GS120** (120 MP) IIQ raw files. Outputs JPEG,
 
 ```bash
 # Install from git
-uv pip install git+https://github.com/nickponline/iiq2img.git
+uv pip install git+https://github.com/DPIRD-DMA/iiq2img.git
 
 # Or clone and install locally
-git clone https://github.com/nickponline/iiq2img.git && cd iiq2img
+git clone https://github.com/DPIRD-DMA/iiq2img.git && cd iiq2img
 uv sync
 
 # Convert (uses fast pipeline by default)
