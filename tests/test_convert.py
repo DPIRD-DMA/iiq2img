@@ -24,7 +24,7 @@ class TestConvertIiq:
 
         result = convert_iiq(str(fake_iiq), out)
 
-        mock_demosaic.assert_called_once_with(fake_iiq, "fast")
+        mock_demosaic.assert_called_once_with(fake_iiq, "fast", bgr=True)
         assert result == Path(out)
         assert os.path.exists(out)
 

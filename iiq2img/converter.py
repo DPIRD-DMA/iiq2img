@@ -174,10 +174,17 @@ def convert_iiq(
     if verbose:
         t0 = time.perf_counter()
 
+    is_geotiff = georef and output_fmt == "tiff"
+
+    # Fast pipeline can output BGR directly, fusing the channel swap into the
+    # gamma LUT and saving a full-image cv2.cvtColor pass (~55ms for 120MP).
+    # GeoTIFF needs RGB for rasterio, so skip the optimisation there.
+    use_bgr = pipeline == "fast" and not thumbnail and not is_geotiff
+
     if thumbnail:
-        rgb = _extract_thumbnail(iiq_path)
+        img = _extract_thumbnail(iiq_path)
     else:
-        rgb = _demosaic(iiq_path, pipeline)
+        img = _demosaic(iiq_path, pipeline, bgr=use_bgr)
 
     if verbose:
         elapsed = (time.perf_counter() - t0) * 1000
@@ -192,24 +199,22 @@ def convert_iiq(
         elapsed = (time.perf_counter() - t0) * 1000
         print(f"  Metadata: {elapsed:.0f}ms")
 
-    if max_dimension and max(rgb.shape[:2]) > max_dimension:
-        rgb = resize_max_dim(rgb, max_dimension)
+    if max_dimension and max(img.shape[:2]) > max_dimension:
+        img = resize_max_dim(img, max_dimension)
 
     if rotate:
-        rgb = np.rot90(rgb, rotate // 90)
+        img = np.rot90(img, rotate // 90)
 
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    h, w = rgb.shape[:2]
-
-    is_geotiff = georef and output_fmt == "tiff"
+    h, w = img.shape[:2]
 
     if verbose:
         t0 = time.perf_counter()
 
     if is_geotiff:
         # Write GeoTIFF directly (skip EXIF injection — rasterio handles metadata)
-        _write_geotiff(rgb, out_path, metadata, compress_quality)
+        _write_geotiff(img, out_path, metadata, compress_quality)
     else:
+        bgr = img if use_bgr else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         encode_image(bgr, out_path, output_fmt, compress_quality)
         if extract_meta and metadata:
             copy_metadata_to_output(iiq_path, out_path, metadata)
@@ -308,11 +313,11 @@ def _extract_thumbnail(iiq_path: Path) -> np.ndarray:
     return rgb
 
 
-def _demosaic(iiq_path: Path, pipeline: str = "fast") -> np.ndarray:
-    """Demosaic IIQ raw data to full-resolution RGB."""
+def _demosaic(iiq_path: Path, pipeline: str = "fast", bgr: bool = False) -> np.ndarray:
+    """Demosaic IIQ raw data to full-resolution RGB (or BGR if bgr=True)."""
     logger.debug("Demosaicing %s with %s pipeline", iiq_path, pipeline)
     if pipeline == "fast":
-        return demosaic_fast(iiq_path)
+        return demosaic_fast(iiq_path, bgr=bgr)
 
     from iiq2img.repair import repair_defective_rows
 

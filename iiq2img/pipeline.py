@@ -31,6 +31,7 @@ def _ensure_numba_warmed_up() -> None:
     dummy_lut = np.zeros(65536, dtype=np.uint8)
     dummy_lut16 = np.zeros(65536, dtype=np.uint16)
     _fast_lut3(dummy16, dummy_lut, dummy_lut, dummy_lut)
+    _fast_lut3_bgr(dummy16, dummy_lut, dummy_lut, dummy_lut)
     _fast_wb_lut_bayer(dummy_bayer, dummy_lut16, dummy_lut16, dummy_lut16)
     _numba_warmed_up = True
 
@@ -47,6 +48,21 @@ def _fast_lut3(
             out[i, j, 0] = lr[img[i, j, 0]]
             out[i, j, 1] = lg[img[i, j, 1]]
             out[i, j, 2] = lb[img[i, j, 2]]
+    return out
+
+
+@numba.njit(parallel=True, cache=True)
+def _fast_lut3_bgr(
+    img: np.ndarray, lr: np.ndarray, lg: np.ndarray, lb: np.ndarray
+) -> np.ndarray:
+    """Apply 3 independent uint16->uint8 LUTs, outputting BGR order (fuses channel swap)."""
+    H, W = img.shape[0], img.shape[1]
+    out = np.empty((H, W, 3), numba.uint8)  # type: ignore[call-overload]
+    for i in numba.prange(H):
+        for j in range(W):
+            out[i, j, 0] = lb[img[i, j, 2]]
+            out[i, j, 1] = lg[img[i, j, 1]]
+            out[i, j, 2] = lr[img[i, j, 0]]
     return out
 
 
@@ -92,13 +108,17 @@ def _build_gamma_lut(threshold: float) -> np.ndarray:
     return np.clip(gamma * 255, 0, 255).astype(np.uint8)
 
 
-def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
+def demosaic_fast(iiq_path: Path, repair: bool = True, bgr: bool = False) -> np.ndarray:
     """
     Fast IIQ demosaic: cv2 edge-aware Bayer + numba LUT pipeline (~4.6x vs LibRaw PPG).
 
     Pipeline: raw Bayer -> defective pixel/row repair -> black subtraction + WB
     + full-range scale (numba LUT) -> cv2 EA demosaic -> auto-brightness (0.4%
     luma clip) -> BT.709 gamma (numba LUT) -> uint8 RGB
+
+    Args:
+        bgr: If True, output BGR order (fuses channel swap into gamma LUT,
+             avoids a separate cv2.cvtColor call for encoding).
     """
     _ensure_numba_warmed_up()
     logger.debug("Fast demosaic: %s", iiq_path)
@@ -137,4 +157,5 @@ def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
 
     gamma_lut = _build_gamma_lut(threshold)
     logger.debug("Fast demosaic complete: threshold=%.4f", threshold)
-    return _fast_lut3(rgb16, gamma_lut, gamma_lut, gamma_lut)
+    lut_fn = _fast_lut3_bgr if bgr else _fast_lut3
+    return lut_fn(rgb16, gamma_lut, gamma_lut, gamma_lut)

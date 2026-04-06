@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0] — 2026-04-06
+
+### Performance
+
+- Fused BGR channel swap into numba gamma LUT (`_fast_lut3_bgr`), eliminating a full-image `cv2.cvtColor` pass (~55ms saved on 120MP images).
+- Replaced numpy strided row-sum detection with numba-parallel `_row_means_all_channels`, ~4x faster defective-row detection.
+
+### Changed
+
+- `demosaic_fast()` accepts `bgr` flag to output BGR directly for encoding.
+- `convert_iiq` skips the RGB→BGR conversion when the fast pipeline already produces BGR output (GeoTIFF path still gets RGB).
+
 ## [0.4.0] — 2026-04-06
 
 ### Added

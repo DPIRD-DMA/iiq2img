@@ -76,6 +76,34 @@ def detect_defective_rows(
 # ── Row-defect detection ─────────────────────────────────────────────────────
 
 
+@numba.njit(parallel=True, cache=True)
+def _row_means_all_channels(bayer: np.ndarray) -> np.ndarray:
+    """Compute per-row means for all 4 RGGB Bayer channels in parallel.
+
+    Returns shape (4, H//2) float32 array. ~4x faster than numpy strided sums.
+    """
+    H, W = bayer.shape
+    half_h = H // 2
+    half_w = W // 2
+    means = np.empty((4, half_h), dtype=np.float32)
+    for i in numba.prange(half_h):
+        s0 = np.int64(0)
+        s1 = np.int64(0)
+        s2 = np.int64(0)
+        s3 = np.int64(0)
+        for j in range(half_w):
+            s0 += bayer[i * 2, j * 2]
+            s1 += bayer[i * 2, j * 2 + 1]
+            s2 += bayer[i * 2 + 1, j * 2]
+            s3 += bayer[i * 2 + 1, j * 2 + 1]
+        inv = np.float32(1.0 / half_w)
+        means[0, i] = s0 * inv
+        means[1, i] = s1 * inv
+        means[2, i] = s2 * inv
+        means[3, i] = s3 * inv
+    return means
+
+
 def _flag_bad_rows(
     bayer: np.ndarray,
     mask: np.ndarray,
@@ -83,21 +111,17 @@ def _flag_bad_rows(
 ) -> None:
     """Flag entire rows that deviate by more than row_thresh_pct from local median.
 
-    Uses vectorised sliding-window median via stride tricks.
+    Uses numba parallel row means + vectorised sliding-window median.
     """
     hw = 15
     channel_offsets = [(0, 0), (0, 1), (1, 0), (1, 1)]
 
-    for row_off, col_off in channel_offsets:
-        plane = bayer[row_off::2, col_off::2]
-        plane_mask = mask[row_off::2, col_off::2]
-        nrows = plane.shape[0]
+    all_means = _row_means_all_channels(bayer)
 
-        # int32 sum is ~25% faster than float64 for uint16 data;
-        # max possible sum = 65535 * 6384 = 418M, well within int32 range.
-        row_means = (
-            plane.sum(axis=1, dtype=np.int32).astype(np.float32) / plane.shape[1]
-        )
+    for ch_idx, (row_off, col_off) in enumerate(channel_offsets):
+        plane_mask = mask[row_off::2, col_off::2]
+        nrows = plane_mask.shape[0]
+        row_means = all_means[ch_idx, :nrows]
 
         # Vectorised rolling median via stride tricks
         padded = np.pad(row_means, (hw, hw), mode="edge")
