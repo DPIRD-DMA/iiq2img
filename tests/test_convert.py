@@ -400,7 +400,6 @@ class TestBatchConvertMultiprocessing:
         mock_executor.submit.return_value = future_mock
 
         from iiq2img import batch_convert
-        from concurrent.futures import as_completed
 
         with patch("iiq2img.converter.as_completed", return_value=[future_mock, future_mock]):
             results = batch_convert(str(tmp_path), out_dir, workers=2)

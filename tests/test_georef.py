@@ -1,8 +1,6 @@
 """Tests for georeferencing: coordinate parsing, GeoInfo, extract_geo_info, transforms, world files."""
 
-import math
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest

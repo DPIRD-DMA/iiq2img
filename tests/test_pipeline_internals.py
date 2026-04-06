@@ -1,7 +1,6 @@
 """Tests for pipeline internal functions: LUTs, gamma curve, warmup."""
 
 import numpy as np
-import pytest
 
 from iiq2img.pipeline import (
     _IIQ_BLACK_LEVEL,
