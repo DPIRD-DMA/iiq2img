@@ -76,9 +76,19 @@ iiq2img benchmark photo.IIQ
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-## Development
+## Contributing
 
 ```bash
-uv run pytest                        # run tests
+git clone https://github.com/DPIRD-DMA/iiq2img.git && cd iiq2img
+uv sync --dev
+pre-commit install
+```
+
+Pre-commit hooks run **ruff** (lint + format) and **pytest** on every commit. To run them manually:
+
+```bash
+uv run ruff check .                  # lint
+uv run ruff format .                 # format
+uv run pytest                        # tests
 uv run iiq2img benchmark photo.IIQ   # timing comparison
 ```
