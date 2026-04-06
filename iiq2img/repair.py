@@ -95,13 +95,17 @@ def _flag_bad_rows(
 
         # int32 sum is ~25% faster than float64 for uint16 data;
         # max possible sum = 65535 * 6384 = 418M, well within int32 range.
-        row_means = plane.sum(axis=1, dtype=np.int32).astype(np.float32) / plane.shape[1]
+        row_means = (
+            plane.sum(axis=1, dtype=np.int32).astype(np.float32) / plane.shape[1]
+        )
 
         # Vectorised rolling median via stride tricks
         padded = np.pad(row_means, (hw, hw), mode="edge")
         strides = (padded.strides[0], padded.strides[0])
         windows = np.lib.stride_tricks.as_strided(
-            padded, shape=(nrows, 2 * hw + 1), strides=strides,
+            padded,
+            shape=(nrows, 2 * hw + 1),
+            strides=strides,
         )
         smoothed = np.median(windows, axis=1)
 

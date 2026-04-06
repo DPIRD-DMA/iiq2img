@@ -401,7 +401,9 @@ class TestBatchConvertMultiprocessing:
 
         from iiq2img import batch_convert
 
-        with patch("iiq2img.converter.as_completed", return_value=[future_mock, future_mock]):
+        with patch(
+            "iiq2img.converter.as_completed", return_value=[future_mock, future_mock]
+        ):
             results = batch_convert(str(tmp_path), out_dir, workers=2)
 
         assert len(results) == 2

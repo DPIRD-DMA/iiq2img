@@ -146,7 +146,9 @@ def convert_iiq(
     pipeline = _resolve_pipeline(pipeline)
     rotate = _resolve_rotate(rotate)
     _validate_iiq_path(iiq_path)
-    logger.debug("Converting %s -> %s (pipeline=%s)", iiq_path, output_path or 'auto', pipeline)
+    logger.debug(
+        "Converting %s -> %s (pipeline=%s)", iiq_path, output_path or "auto", pipeline
+    )
 
     if verbose:
         t_total = time.perf_counter()
@@ -463,9 +465,7 @@ def run_benchmark(iiq_path: str | Path) -> None:
 
     for name, thumb, fmt, cq, max_dim, pl in approaches:
         tag = "thumb" if thumb else pl
-        out = Path(
-            f"/tmp/bench_{tag}_{fmt}_{cq}{FORMAT_EXTENSIONS[fmt]}"
-        )
+        out = Path(f"/tmp/bench_{tag}_{fmt}_{cq}{FORMAT_EXTENSIONS[fmt]}")
         t0 = time.perf_counter()
         convert_iiq(
             iiq_path,
@@ -479,10 +479,7 @@ def run_benchmark(iiq_path: str | Path) -> None:
         )
         elapsed_ms = (time.perf_counter() - t0) * 1000
         file_size = out.stat().st_size
-        print(
-            f"{name:<35} {elapsed_ms:>7.0f}ms "
-            f"{file_size / 1024 / 1024:>8.1f}MB"
-        )
+        print(f"{name:<35} {elapsed_ms:>7.0f}ms {file_size / 1024 / 1024:>8.1f}MB")
 
 
 def _build_cli_parsers() -> tuple:

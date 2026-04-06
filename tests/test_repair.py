@@ -23,10 +23,10 @@ SAMPLE_IIQ = SAMPLE_DIR / "P0286625.IIQ"
 def _make_clean_bayer(h: int = 40, w: int = 40, base: int = 2000) -> np.ndarray:
     """Create a synthetic RGGB Bayer array with plausible values."""
     bayer = np.full((h, w), base, dtype=np.uint16)
-    bayer[0::2, 0::2] = base          # R
-    bayer[0::2, 1::2] = base + 200    # G1
-    bayer[1::2, 0::2] = base + 200    # G2
-    bayer[1::2, 1::2] = base + 50     # B
+    bayer[0::2, 0::2] = base  # R
+    bayer[0::2, 1::2] = base + 200  # G1
+    bayer[1::2, 0::2] = base + 200  # G2
+    bayer[1::2, 1::2] = base + 50  # B
     return bayer
 
 

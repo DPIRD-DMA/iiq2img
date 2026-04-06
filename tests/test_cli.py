@@ -33,7 +33,18 @@ class TestCliMain:
         with patch.object(
             sys,
             "argv",
-            ["iiq2img", "batch", "/in", "/out", "--format", "png", "--quality", "75", "--workers", "4"],
+            [
+                "iiq2img",
+                "batch",
+                "/in",
+                "/out",
+                "--format",
+                "png",
+                "--quality",
+                "75",
+                "--workers",
+                "4",
+            ],
         ):
             _cli_main()
         mock_batch.assert_called_once_with(
@@ -63,7 +74,19 @@ class TestCliMain:
         with patch.object(
             sys,
             "argv",
-            ["iiq2img", "batch", "/in", "/out", "--format", "jpg", "--quality", "90", "--workers", "4", "--libraw"],
+            [
+                "iiq2img",
+                "batch",
+                "/in",
+                "/out",
+                "--format",
+                "jpg",
+                "--quality",
+                "90",
+                "--workers",
+                "4",
+                "--libraw",
+            ],
         ):
             _cli_main()
         mock_batch.assert_called_once_with(
