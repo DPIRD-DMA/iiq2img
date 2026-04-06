@@ -5,6 +5,10 @@ from importlib.metadata import version
 __version__ = version("iiq2img")
 
 from iiq2img.converter import (
+    EXIT_BAD_ARGS,
+    EXIT_ERROR,
+    EXIT_NO_FILES,
+    EXIT_OK,
     batch_convert,
     convert_iiq,
     read_iiq,
@@ -25,6 +29,10 @@ from iiq2img.metadata import extract_metadata
 from iiq2img.repair import detect_defective_rows, repair_defective_rows
 
 __all__ = [
+    "EXIT_BAD_ARGS",
+    "EXIT_ERROR",
+    "EXIT_NO_FILES",
+    "EXIT_OK",
     "GeoInfo",
     "FORMAT_EXTENSIONS",
     "batch_convert",

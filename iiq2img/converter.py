@@ -38,6 +38,12 @@ logger = logging.getLogger(__name__)
 _VALID_PIPELINES = ("libraw", "fast")
 _VALID_ROTATIONS = (0, 90, 180, 270, 360)
 
+# CLI exit codes
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_BAD_ARGS = 2
+EXIT_NO_FILES = 3
+
 
 def _resolve_pipeline(value: str) -> str:
     """Validate and normalise a pipeline name to lowercase."""
@@ -537,47 +543,71 @@ def _build_cli_parsers() -> tuple:
     return main_parser, bench_parser, batch_parser, file_parser
 
 
-def _cli_main() -> None:
-    """CLI entry point for the iiq2img command."""
+def _cli_main() -> int:
+    """CLI entry point for the iiq2img command.
+
+    Returns:
+        Exit code: EXIT_OK (0), EXIT_ERROR (1), EXIT_BAD_ARGS (2), or EXIT_NO_FILES (3).
+    """
     main_parser, bench_parser, batch_parser, file_parser = _build_cli_parsers()
 
     argv = sys.argv[1:]
     if not argv:
         main_parser.print_help()
-        return
+        sys.exit(EXIT_BAD_ARGS)
 
     command = argv[0]
 
     if command == "benchmark":
         args = bench_parser.parse_args(argv[1:])
-        run_benchmark(args.iiq_path)
+        try:
+            run_benchmark(args.iiq_path)
+        except (FileNotFoundError, ValueError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(EXIT_ERROR)
+        sys.exit(EXIT_OK)
 
     elif command == "batch":
         args = batch_parser.parse_args(argv[1:])
         pl = "libraw" if args.libraw else "fast"
-        batch_convert(
-            args.input_dir,
-            args.output_dir,
-            output_format=args.format,
-            compress_quality=args.quality,
-            workers=args.workers,
-            pipeline=pl,
-        )
+        try:
+            results = batch_convert(
+                args.input_dir,
+                args.output_dir,
+                output_format=args.format,
+                compress_quality=args.quality,
+                workers=args.workers,
+                pipeline=pl,
+            )
+        except (FileNotFoundError, ValueError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(EXIT_ERROR)
+        if not results:
+            sys.exit(EXIT_NO_FILES)
+        sys.exit(EXIT_OK)
 
     elif command.startswith("-"):
         # Only flags, no file — show help
         main_parser.print_help()
+        sys.exit(EXIT_BAD_ARGS)
 
     else:
         args = file_parser.parse_args(argv)
         pl = "libraw" if args.libraw else "fast"
-        t0 = time.perf_counter()
-        out_path = convert_iiq(args.file, pipeline=pl)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        print(f"Output:   {out_path}")
-        print(f"Pipeline: {pl}")
-        print(f"Time:     {elapsed_ms:.0f}ms")
-        print(f"Size:     {out_path.stat().st_size / 1024 / 1024:.1f}MB")
+        try:
+            t0 = time.perf_counter()
+            out_path = convert_iiq(args.file, pipeline=pl)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            print(f"Output:   {out_path}")
+            print(f"Pipeline: {pl}")
+            print(f"Time:     {elapsed_ms:.0f}ms")
+            print(f"Size:     {out_path.stat().st_size / 1024 / 1024:.1f}MB")
+        except (FileNotFoundError, ValueError, OSError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(EXIT_ERROR)
+        sys.exit(EXIT_OK)
+
+    return EXIT_OK  # unreachable, satisfies type checker
 
 
 if __name__ == "__main__":
