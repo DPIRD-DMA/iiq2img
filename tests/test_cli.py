@@ -10,12 +10,12 @@ from iiq2img.converter import _cli_main
 
 
 class TestCliMain:
-    def test_usage_printed_with_no_args(self, capsys):
+    def test_help_printed_with_no_args(self, capsys):
         with patch.object(sys, "argv", ["iiq2img"]):
-            with patch("iiq2img.converter.run_benchmark"):
-                _cli_main()
+            _cli_main()
         output = capsys.readouterr().out
-        assert "Usage:" in output
+        assert "benchmark" in output
+        assert "batch" in output
 
     @patch("iiq2img.converter.run_benchmark")
     def test_benchmark_subcommand(self, mock_bench):
@@ -32,7 +32,9 @@ class TestCliMain:
     @patch("iiq2img.converter.batch_convert")
     def test_batch_subcommand(self, mock_batch):
         with patch.object(
-            sys, "argv", ["iiq2img", "batch", "/in", "/out", "png", "75", "4"]
+            sys,
+            "argv",
+            ["iiq2img", "batch", "/in", "/out", "--format", "png", "--quality", "75", "--workers", "4"],
         ):
             _cli_main()
         mock_batch.assert_called_once_with(
@@ -60,7 +62,9 @@ class TestCliMain:
     @patch("iiq2img.converter.batch_convert")
     def test_batch_libraw_flag(self, mock_batch):
         with patch.object(
-            sys, "argv", ["iiq2img", "batch", "/in", "/out", "jpg", "90", "4", "--libraw"]
+            sys,
+            "argv",
+            ["iiq2img", "batch", "/in", "/out", "--format", "jpg", "--quality", "90", "--workers", "4", "--libraw"],
         ):
             _cli_main()
         mock_batch.assert_called_once_with(
@@ -75,7 +79,6 @@ class TestCliMain:
     @patch("iiq2img.converter.convert_iiq")
     def test_single_file_conversion(self, mock_convert, capsys):
         out_path = Path("/tmp/out.jpg")
-        out_path_mock = patch.object(Path, "stat")
         mock_convert.return_value = out_path
         with patch.object(sys, "argv", ["iiq2img", "photo.IIQ"]):
             with patch.object(Path, "stat") as mock_stat:
@@ -96,17 +99,18 @@ class TestCliMain:
         output = capsys.readouterr().out
         assert "Pipeline: libraw" in output
 
-    def test_flags_only_no_positional_arg(self, capsys):
-        """CLI with only flags and no file path should exit with error."""
-        with patch.object(sys, "argv", ["iiq2img", "--fast"]):
-            with pytest.raises(SystemExit):
-                _cli_main()
+    def test_libraw_flag_only_shows_help(self, capsys):
+        """CLI with only --libraw and no file path should print help."""
+        with patch.object(sys, "argv", ["iiq2img", "--libraw"]):
+            _cli_main()
+        output = capsys.readouterr().out
+        assert "benchmark" in output
+        assert "batch" in output
 
-    def test_usage_shows_all_subcommands(self, capsys):
-        """Usage output should document benchmark, batch, and single-file modes."""
+    def test_help_shows_all_subcommands(self, capsys):
+        """Help output should document benchmark, batch, and --libraw."""
         with patch.object(sys, "argv", ["iiq2img"]):
-            with patch("iiq2img.converter.run_benchmark"):
-                _cli_main()
+            _cli_main()
         output = capsys.readouterr().out
         assert "benchmark" in output
         assert "batch" in output

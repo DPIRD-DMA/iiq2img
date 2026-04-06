@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] — 2026-04-06
+
+### Added
+
+- `verbose` parameter on `convert_iiq()` — prints per-step timing (demosaic, metadata, encode, total).
+- Structured logging (`logging.debug`) in converter, pipeline, and repair modules.
+- Docstring examples for `repair_defective_rows`, `detect_defective_rows`, `extract_geo_info`, and `write_world_file`.
+- GitHub Actions CI workflow (ruff, mypy, pytest on push/PR).
+
+### Changed
+
+- CLI rewritten with `argparse` — batch args are now named flags (`--format`, `--quality`, `--workers`) instead of positional.
+- Extracted `_validate_iiq_path()` helper to deduplicate path validation in `read_iiq` and `convert_iiq`.
+- Moved `FINDINGS.md` to `docs/FINDINGS.md`.
+- Documented georef limitations (spherical Earth model, nadir assumption) in `compute_transform` and `extract_geo_info` docstrings.
+
 ## [0.3.0] — 2026-04-05
 
 ### Added

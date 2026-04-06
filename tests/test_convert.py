@@ -410,6 +410,40 @@ class TestBatchConvertMultiprocessing:
         assert mock_executor.submit.call_count == 2
 
 
+class TestConvertIiqVerbose:
+    @patch("iiq2img.converter.copy_metadata_to_output")
+    @patch("iiq2img.converter.extract_metadata", return_value={"Make": "Phase One"})
+    @patch("iiq2img.converter._demosaic")
+    def test_verbose_prints_timing(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq, capsys
+    ):
+        mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.jpg")
+
+        convert_iiq(str(fake_iiq), out, verbose=True)
+
+        output = capsys.readouterr().out
+        assert "Demosaic (fast):" in output
+        assert "Metadata:" in output
+        assert "Encode (jpg):" in output
+        assert "Total:" in output
+        assert "ms" in output
+
+    @patch("iiq2img.converter.copy_metadata_to_output")
+    @patch("iiq2img.converter.extract_metadata", return_value={})
+    @patch("iiq2img.converter._demosaic")
+    def test_verbose_false_prints_nothing(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq, capsys
+    ):
+        mock_demosaic.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.jpg")
+
+        convert_iiq(str(fake_iiq), out, verbose=False)
+
+        output = capsys.readouterr().out
+        assert output == ""
+
+
 class TestConvertIiqValidation:
     def test_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):

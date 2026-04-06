@@ -11,8 +11,12 @@ neighbours.  The numba repair kernel parallelises over rows.
 
 from __future__ import annotations
 
+import logging
+
 import numba
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -31,12 +35,21 @@ def repair_defective_rows(
 
     Returns:
         Corrected copy of the Bayer array (uint16).
+
+    Example::
+
+        import rawpy
+        raw = rawpy.imread("photo.IIQ")
+        repaired = repair_defective_rows(raw.raw_image_visible)
     """
     out = bayer.copy()
     mask = detect_defective_rows(bayer, row_thresh_pct)
 
     if mask.any():
+        logger.debug("Defective rows detected: %d pixels flagged", mask.sum())
         _numba_repair_bayer(out, mask)
+    else:
+        logger.debug("No defective rows detected")
 
     return out
 
@@ -45,7 +58,15 @@ def detect_defective_rows(
     bayer: np.ndarray,
     row_thresh_pct: float = 10.0,
 ) -> np.ndarray:
-    """Return a boolean mask of defective pixels in the Bayer array."""
+    """Return a boolean mask of defective pixels in the Bayer array.
+
+    Example::
+
+        import rawpy
+        raw = rawpy.imread("photo.IIQ")
+        mask = detect_defective_rows(raw.raw_image_visible)
+        print(f"Flagged {mask.sum()} defective pixels")
+    """
     H, W = bayer.shape
     mask = np.zeros((H, W), dtype=np.bool_)
     _flag_bad_rows(bayer, mask, row_thresh_pct)

@@ -11,6 +11,7 @@ Retains all EXIF/GPS/XMP metadata from the original IIQ file.
 See FINDINGS.md for details on how the fast pipeline was matched to LibRaw.
 """
 
+import logging
 import multiprocessing
 import os
 import sys
@@ -31,6 +32,8 @@ from iiq2img.encode import (
 from iiq2img.metadata import copy_metadata_to_output, extract_metadata
 from iiq2img.pipeline import demosaic_fast
 
+logger = logging.getLogger(__name__)
+
 
 _VALID_PIPELINES = ("libraw", "fast")
 _VALID_ROTATIONS = (0, 90, 180, 270, 360)
@@ -44,6 +47,16 @@ def _resolve_pipeline(value: str) -> str:
             f"Unknown pipeline: {value!r}. Expected one of: {', '.join(_VALID_PIPELINES)!r}"
         )
     return v
+
+
+def _validate_iiq_path(iiq_path: Path) -> None:
+    """Raise if path doesn't exist, isn't a file, or isn't .IIQ."""
+    if not iiq_path.exists():
+        raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
+    if not iiq_path.is_file():
+        raise ValueError(f"Expected a file, got a directory: {iiq_path}")
+    if iiq_path.suffix.lower() != ".iiq":
+        raise ValueError(f"Expected a .IIQ file, got '{iiq_path.suffix}': {iiq_path}")
 
 
 def _resolve_rotate(value: int) -> int:
@@ -79,13 +92,7 @@ def read_iiq(
     iiq_path = Path(iiq_path)
     pipeline = _resolve_pipeline(pipeline)
     rotate = _resolve_rotate(rotate)
-
-    if not iiq_path.exists():
-        raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
-    if not iiq_path.is_file():
-        raise ValueError(f"Expected a file, got a directory: {iiq_path}")
-    if iiq_path.suffix.lower() != ".iiq":
-        raise ValueError(f"Expected a .IIQ file, got '{iiq_path.suffix}': {iiq_path}")
+    _validate_iiq_path(iiq_path)
 
     if thumbnail:
         rgb = _extract_thumbnail(iiq_path)
@@ -112,6 +119,7 @@ def convert_iiq(
     georef: bool = False,
     rotate: int = 0,
     pipeline: str = "fast",
+    verbose: bool = False,
 ) -> Path:
     """
     Convert a Phase One IIQ raw file to JPEG, PNG, or TIFF.
@@ -129,6 +137,7 @@ def convert_iiq(
         rotate: Rotation angle in degrees — 0, 90, 180, 270 (for different camera mounts).
                 360 is accepted and treated as 0.
         pipeline: Demosaic pipeline — 'fast' (~3x faster, default) or 'libraw' (accurate, ~2.8s).
+        verbose: If True, print per-step timing information.
 
     Returns:
         Path to the output file.
@@ -136,13 +145,11 @@ def convert_iiq(
     iiq_path = Path(iiq_path)
     pipeline = _resolve_pipeline(pipeline)
     rotate = _resolve_rotate(rotate)
+    _validate_iiq_path(iiq_path)
+    logger.debug("Converting %s -> %s (pipeline=%s)", iiq_path, output_path or 'auto', pipeline)
 
-    if not iiq_path.exists():
-        raise FileNotFoundError(f"IIQ file not found: {iiq_path}")
-    if not iiq_path.is_file():
-        raise ValueError(f"Expected a file, got a directory: {iiq_path}")
-    if iiq_path.suffix.lower() != ".iiq":
-        raise ValueError(f"Expected a .IIQ file, got '{iiq_path.suffix}': {iiq_path}")
+    if verbose:
+        t_total = time.perf_counter()
 
     out_path = Path(output_path) if output_path is not None else None
     output_fmt = resolve_format(output_format, out_path)
@@ -155,12 +162,27 @@ def convert_iiq(
 
     # Always extract metadata if georef is requested (need XMP for GPS)
     need_meta = extract_meta or georef
-    metadata = extract_metadata(iiq_path) if need_meta else {}
+
+    if verbose:
+        t0 = time.perf_counter()
 
     if thumbnail:
         rgb = _extract_thumbnail(iiq_path)
     else:
         rgb = _demosaic(iiq_path, pipeline)
+
+    if verbose:
+        elapsed = (time.perf_counter() - t0) * 1000
+        print(f"  Demosaic ({pipeline}): {elapsed:.0f}ms")
+
+    if verbose:
+        t0 = time.perf_counter()
+
+    metadata = extract_metadata(iiq_path) if need_meta else {}
+
+    if verbose:
+        elapsed = (time.perf_counter() - t0) * 1000
+        print(f"  Metadata: {elapsed:.0f}ms")
 
     if max_dimension and max(rgb.shape[:2]) > max_dimension:
         rgb = resize_max_dim(rgb, max_dimension)
@@ -173,6 +195,9 @@ def convert_iiq(
 
     is_geotiff = georef and output_fmt == "tiff"
 
+    if verbose:
+        t0 = time.perf_counter()
+
     if is_geotiff:
         # Write GeoTIFF directly (skip EXIF injection — rasterio handles metadata)
         _write_geotiff(rgb, out_path, metadata, compress_quality)
@@ -181,9 +206,18 @@ def convert_iiq(
         if extract_meta and metadata:
             copy_metadata_to_output(iiq_path, out_path, metadata)
 
+    if verbose:
+        elapsed = (time.perf_counter() - t0) * 1000
+        print(f"  Encode ({output_fmt}): {elapsed:.0f}ms")
+
     if georef and not is_geotiff:
         _apply_georef(out_path, metadata, w, h)
 
+    if verbose:
+        total = (time.perf_counter() - t_total) * 1000
+        print(f"  Total: {total:.0f}ms -> {out_path}")
+
+    logger.debug("Conversion complete: %s", out_path)
     return out_path
 
 
@@ -268,6 +302,7 @@ def _extract_thumbnail(iiq_path: Path) -> np.ndarray:
 
 def _demosaic(iiq_path: Path, pipeline: str = "fast") -> np.ndarray:
     """Demosaic IIQ raw data to full-resolution RGB."""
+    logger.debug("Demosaicing %s with %s pipeline", iiq_path, pipeline)
     if pipeline == "fast":
         return demosaic_fast(iiq_path)
 
@@ -450,61 +485,102 @@ def run_benchmark(iiq_path: str | Path) -> None:
         )
 
 
-def _cli_main() -> None:
-    """CLI entry point for the iiq2img command."""
+def _build_cli_parsers() -> tuple:
+    """Build argparse parsers for benchmark, batch, and single-file modes."""
+    import argparse
+
     sample = "PhaseOneSample/P0286625.IIQ"
 
-    if len(sys.argv) > 1 and sys.argv[1] == "benchmark":
-        path = sys.argv[2] if len(sys.argv) > 2 else sample
-        run_benchmark(path)
+    # Top-level parser (also used for help display)
+    main_parser = argparse.ArgumentParser(
+        prog="iiq2img",
+        description="Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images.",
+        usage="%(prog)s <file.IIQ> [--libraw]\n"
+        "       %(prog)s benchmark [iiq_path]\n"
+        "       %(prog)s batch [input_dir] [output_dir] [options]",
+    )
+    main_parser.add_argument(
+        "--libraw", action="store_true", help="Use LibRaw PPG pipeline"
+    )
 
-    elif len(sys.argv) > 1 and sys.argv[1] == "batch":
-        input_dir = sys.argv[2] if len(sys.argv) > 2 else "PhaseOneSample"
-        output_dir = sys.argv[3] if len(sys.argv) > 3 else "/tmp/iiq_output"
-        fmt_str = sys.argv[4] if len(sys.argv) > 4 else "jpg"
-        cq = int(sys.argv[5]) if len(sys.argv) > 5 else 90
-        workers = int(sys.argv[6]) if len(sys.argv) > 6 else None
-        pl = "libraw" if "--libraw" in sys.argv else "fast"
+    # benchmark parser
+    bench_parser = argparse.ArgumentParser(prog="iiq2img benchmark")
+    bench_parser.add_argument(
+        "iiq_path", nargs="?", default=sample, help="IIQ file to benchmark"
+    )
+
+    # batch parser
+    batch_parser = argparse.ArgumentParser(prog="iiq2img batch")
+    batch_parser.add_argument(
+        "input_dir", nargs="?", default="PhaseOneSample", help="Input directory"
+    )
+    batch_parser.add_argument(
+        "output_dir", nargs="?", default="/tmp/iiq_output", help="Output directory"
+    )
+    batch_parser.add_argument(
+        "--format", default="jpg", dest="format", help="Output format (default: jpg)"
+    )
+    batch_parser.add_argument(
+        "--quality", type=int, default=90, help="Compression quality (default: 90)"
+    )
+    batch_parser.add_argument(
+        "--workers", type=int, default=None, help="Number of workers (default: auto)"
+    )
+    batch_parser.add_argument(
+        "--libraw", action="store_true", help="Use LibRaw PPG pipeline"
+    )
+
+    # single-file parser
+    file_parser = argparse.ArgumentParser(prog="iiq2img")
+    file_parser.add_argument("file", help="IIQ file to convert")
+    file_parser.add_argument(
+        "--libraw", action="store_true", help="Use LibRaw PPG pipeline"
+    )
+
+    return main_parser, bench_parser, batch_parser, file_parser
+
+
+def _cli_main() -> None:
+    """CLI entry point for the iiq2img command."""
+    main_parser, bench_parser, batch_parser, file_parser = _build_cli_parsers()
+
+    argv = sys.argv[1:]
+    if not argv:
+        main_parser.print_help()
+        return
+
+    command = argv[0]
+
+    if command == "benchmark":
+        args = bench_parser.parse_args(argv[1:])
+        run_benchmark(args.iiq_path)
+
+    elif command == "batch":
+        args = batch_parser.parse_args(argv[1:])
+        pl = "libraw" if args.libraw else "fast"
         batch_convert(
-            input_dir,
-            output_dir,
-            output_format=fmt_str,
-            compress_quality=cq,
-            workers=workers,
+            args.input_dir,
+            args.output_dir,
+            output_format=args.format,
+            compress_quality=args.quality,
+            workers=args.workers,
             pipeline=pl,
         )
 
-    elif len(sys.argv) > 1:
-        pl = "libraw" if "--libraw" in sys.argv else "fast"
-        path_arg = next(
-            (a for a in sys.argv[1:] if not a.startswith("--")), None
-        )
-        if path_arg is None:
-            print(f"Error: no IIQ file specified. Usage: {sys.argv[0]} <file.IIQ>")
-            sys.exit(1)
+    elif command.startswith("-"):
+        # Only flags, no file — show help
+        main_parser.print_help()
+
+    else:
+        args = file_parser.parse_args(argv)
+        pl = "libraw" if args.libraw else "fast"
         t0 = time.perf_counter()
-        out_path = convert_iiq(path_arg, pipeline=pl)
+        out_path = convert_iiq(args.file, pipeline=pl)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         print(f"Output:   {out_path}")
         print(f"Pipeline: {pl}")
         print(f"Time:     {elapsed_ms:.0f}ms")
         print(f"Size:     {out_path.stat().st_size / 1024 / 1024:.1f}MB")
-
-    else:
-        print("Usage:")
-        print(f"  {sys.argv[0]} benchmark [iiq_path]")
-        print(
-            f"  {sys.argv[0]} batch [in_dir] [out_dir] [jpg|png|tiff] [quality] [workers] [--libraw]"
-        )
-        print(f"  {sys.argv[0]} <file.IIQ> [--libraw]")
-        print()
-        print(
-            "  --libraw   Use LibRaw PPG pipeline (accurate reference, ~3x slower than default fast pipeline)"
-        )
-        print()
-        print("Running benchmark on sample file...")
-        print()
-        run_benchmark(sample)
 
 
 if __name__ == "__main__":

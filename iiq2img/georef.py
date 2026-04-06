@@ -92,6 +92,17 @@ def extract_geo_info(
 
     Returns:
         GeoInfo if GPS data is available, None otherwise
+
+    Note:
+        Altitude defaults to 100m AGL if not found in metadata.
+        Yaw defaults to 0 degrees (north) if not found.
+
+    Example::
+
+        metadata = extract_metadata("photo.IIQ")
+        geo = extract_geo_info(metadata.get("xmp", ""), 80.0, 12768, 9564)
+        if geo:
+            print(f"GSD: {geo.gsd:.3f} m/px")
     """
     try:
         root = ET.fromstring(xmp)
@@ -167,6 +178,13 @@ def compute_transform(geo: GeoInfo) -> Affine:
     Returns an Affine transform mapping pixel coords to WGS84 (lon, lat).
     Assumes nadir (straight-down) camera — no yaw rotation applied since
     world files and GeoTIFFs can't represent rotation without shearing.
+
+    Note:
+        Uses a simplified spherical Earth model (111,320 m/degree latitude).
+        Longitude scaling uses cos(lat) approximation, accurate to ~0.1%
+        below 80 degrees latitude. Assumes nadir (straight-down) camera
+        orientation — yaw is not applied. For higher accuracy, consider a
+        full UTM projection.
     """
     gsd = geo.gsd  # meters per pixel
 
@@ -195,6 +213,11 @@ def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
 
     Returns:
         Path to the created world file
+
+    Example::
+
+        geo = extract_geo_info(xmp, 80.0, 12768, 9564)
+        write_world_file("output.jpg", geo)  # creates output.jgw
     """
     ext = Path(image_path).suffix.lower()
     world_ext_map = {

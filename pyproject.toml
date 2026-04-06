@@ -1,6 +1,6 @@
 [project]
 name = "iiq2img"
-version = "0.3.0"
+version = "0.4.0"
 description = "Fast IIQ converter for Phase One iXM-GS120 (120MP) raw images"
 readme = "README.md"
 requires-python = ">=3.11"

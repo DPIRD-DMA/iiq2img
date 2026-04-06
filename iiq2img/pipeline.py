@@ -5,6 +5,7 @@
 Mean pixel diff ~6.5/255 vs LibRaw. See FINDINGS.md for details.
 """
 
+import logging
 from pathlib import Path
 
 import cv2
@@ -13,6 +14,8 @@ import numpy as np
 import rawpy
 
 from iiq2img.repair import repair_defective_rows
+
+logger = logging.getLogger(__name__)
 
 _IIQ_BLACK_LEVEL = 1024  # rawpy incorrectly reports 0; true value confirmed empirically
 
@@ -98,6 +101,7 @@ def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
     luma clip) -> BT.709 gamma (numba LUT) -> uint8 RGB
     """
     _ensure_numba_warmed_up()
+    logger.debug("Fast demosaic: %s", iiq_path)
 
     try:
         raw = rawpy.imread(str(iiq_path))
@@ -112,6 +116,7 @@ def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
     bayer = raw.raw_image_visible
     if repair:
         bayer = repair_defective_rows(bayer)
+        logger.debug("Repaired defective rows")
 
     # Black subtraction + WB on raw Bayer view (skip .copy() — LUT writes to new array)
     lr, lg, lb = _build_wb_luts(wb)
@@ -131,4 +136,5 @@ def demosaic_fast(iiq_path: Path, repair: bool = True) -> np.ndarray:
     threshold = float(edges[min(idx + 1, len(edges) - 1)])
 
     gamma_lut = _build_gamma_lut(threshold)
+    logger.debug("Fast demosaic complete: threshold=%.4f", threshold)
     return _fast_lut3(rgb16, gamma_lut, gamma_lut, gamma_lut)
