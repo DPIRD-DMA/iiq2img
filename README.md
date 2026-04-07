@@ -5,7 +5,10 @@ Fast converter for **Phase One iXM-GS120** (120 MP) IIQ raw files. Outputs JPEG,
 ## Quick start
 
 ```bash
-# Install from git
+# Install from PyPI
+pip install iiq2img
+
+# Or install the latest dev version from git
 uv pip install git+https://github.com/DPIRD-DMA/iiq2img.git
 
 # Or clone and install locally
@@ -25,7 +28,7 @@ iiq2img photo.IIQ --libraw            # use LibRaw PPG instead
 | default (fast) | ~1.0 s | 3.6x | Mean diff ~7/255 vs reference |
 | `--libraw` (LibRaw PPG) | ~3.3 s | baseline | Reference |
 
-The fast pipeline uses cv2 edge-aware demosaic + numba parallel LUTs with BT.709 gamma, matched to LibRaw's output. See [FINDINGS.md](docs/FINDINGS.md) for how.
+The fast pipeline uses cv2 edge-aware demosaic + numba parallel LUTs with BT.709 gamma, matched to LibRaw's output. See [FINDINGS.md](https://github.com/DPIRD-DMA/iiq2img/blob/main/docs/FINDINGS.md) for how.
 
 ## Python API
 
@@ -74,7 +77,7 @@ iiq2img benchmark photo.IIQ
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+See [CHANGELOG.md](https://github.com/DPIRD-DMA/iiq2img/blob/main/CHANGELOG.md) for version history.
 
 ## Contributing
 
