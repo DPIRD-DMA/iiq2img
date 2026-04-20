@@ -175,37 +175,54 @@ def _meters_per_degree_lon(lat: float) -> float:
 def compute_transform(geo: GeoInfo) -> Affine:
     """Compute an affine transform from GeoInfo.
 
-    Returns an Affine transform mapping pixel coords to WGS84 (lon, lat).
-    Assumes nadir (straight-down) camera — no yaw rotation applied since
-    world files and GeoTIFFs can't represent rotation without shearing.
+    Returns an Affine transform mapping pixel coords to WGS84 (lon, lat),
+    including yaw rotation so images align with their flight direction in
+    GIS viewers. Assumes a nadir (straight-down) camera whose image "top"
+    (row 0) points along the aircraft heading; for mounts where this isn't
+    true, pre-rotate the image via ``convert_iiq(rotate=...)`` or adjust
+    ``GeoInfo.yaw_deg`` before calling.
 
     Note:
         Uses a simplified spherical Earth model (111,320 m/degree latitude).
         Longitude scaling uses cos(lat) approximation, accurate to ~0.1%
-        below 80 degrees latitude. Assumes nadir (straight-down) camera
-        orientation — yaw is not applied. For higher accuracy, consider a
-        full UTM projection.
+        below 80 degrees latitude. For higher accuracy, consider a full UTM
+        projection.
     """
-    gsd = geo.gsd  # meters per pixel
-
-    # Convert GSD from meters to degrees
-    m_per_deg_lat = _meters_per_degree_lat(geo.latitude)
-    m_per_deg_lon = _meters_per_degree_lon(geo.latitude)
-    pixel_deg_x = gsd / m_per_deg_lon
-    pixel_deg_y = gsd / m_per_deg_lat
-
-    # Upper-left corner: image center offset by half the image size
-    ul_x = geo.longitude - (geo.image_width / 2.0) * pixel_deg_x
-    ul_y = geo.latitude + (geo.image_height / 2.0) * pixel_deg_y
-
-    # No rotation: x increases right, y increases down (negative)
     from rasterio.transform import Affine
 
-    return Affine(pixel_deg_x, 0.0, ul_x, 0.0, -pixel_deg_y, ul_y)
+    gsd = geo.gsd  # meters per pixel
+    m_per_deg_lat = _meters_per_degree_lat(geo.latitude)
+    m_per_deg_lon = _meters_per_degree_lon(geo.latitude)
+
+    # Yaw is clockwise from true north; image "up" (−y) points along the heading.
+    theta = math.radians(geo.yaw_deg)
+    cos_t = math.cos(theta)
+    sin_t = math.sin(theta)
+
+    # Pixel basis vectors in degrees. +x (right) bears θ+90°, +y (down) bears θ+180°.
+    a = cos_t * gsd / m_per_deg_lon
+    b = -sin_t * gsd / m_per_deg_lon
+    d = -sin_t * gsd / m_per_deg_lat
+    e = -cos_t * gsd / m_per_deg_lat
+
+    # Solve so the image center pixel (W/2, H/2) maps to (longitude, latitude).
+    cx = geo.image_width / 2.0
+    cy = geo.image_height / 2.0
+    c = geo.longitude - a * cx - b * cy
+    f = geo.latitude - d * cx - e * cy
+
+    return Affine(a, b, c, d, e, f)
 
 
 def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
-    """Write a world file (.jgw/.pgw/.tfw) for the given image.
+    """Write a world file (.jgw/.pgw/.tfw) plus CRS sidecars for the given image.
+
+    World files only carry the transform — GIS tools need a separate CRS hint.
+    Two sidecars are written so both major toolchains recognise WGS84:
+
+      - ``<basename>.prj``: WKT file read by ArcGIS-family tools.
+      - ``<basename>.<ext>.aux.xml``: GDAL PAM file read by QGIS (GDAL's JPEG
+        driver ignores .prj; without this QGIS reports "Unknown" CRS).
 
     Args:
         image_path: Path to the image file
@@ -217,9 +234,11 @@ def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
     Example::
 
         geo = extract_geo_info(xmp, 80.0, 12768, 9564)
-        write_world_file("output.jpg", geo)  # creates output.jgw
+        write_world_file("output.jpg", geo)
+        # creates output.jgw, output.prj, output.jpg.aux.xml
     """
-    ext = Path(image_path).suffix.lower()
+    image_path = Path(image_path)
+    ext = image_path.suffix.lower()
     world_ext_map = {
         ".jpg": ".jgw",
         ".jpeg": ".jgw",
@@ -228,7 +247,7 @@ def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
         ".tiff": ".tfw",
     }
     world_ext = world_ext_map.get(ext, ".wld")
-    world_path = str(Path(image_path).with_suffix(world_ext))
+    world_path = str(image_path.with_suffix(world_ext))
 
     transform = compute_transform(geo)
 
@@ -246,6 +265,13 @@ def write_world_file(image_path: str | Path, geo: GeoInfo) -> str:
         f.write(f"{transform.e:.15f}\n")
         f.write(f"{transform.c:.15f}\n")
         f.write(f"{transform.f:.15f}\n")
+
+    from rasterio.crs import CRS
+
+    wkt = CRS.from_epsg(4326).to_wkt()
+    image_path.with_suffix(".prj").write_text(wkt)
+    aux_path = image_path.with_name(image_path.name + ".aux.xml")
+    aux_path.write_text(f"<PAMDataset>\n  <SRS>{wkt}</SRS>\n</PAMDataset>\n")
 
     return world_path
 

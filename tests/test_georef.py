@@ -295,11 +295,88 @@ class TestComputeTransform:
 
     def test_center_pixel_maps_to_geo_center(self, geo):
         t = compute_transform(geo)
-        # Pixel center of image → should be close to geo center
-        cx = t.c + (geo.image_width / 2.0) * t.a
-        cy = t.f + (geo.image_height / 2.0) * t.e
+        # Apply full affine including rotation terms
+        cx = t.c + (geo.image_width / 2.0) * t.a + (geo.image_height / 2.0) * t.b
+        cy = t.f + (geo.image_width / 2.0) * t.d + (geo.image_height / 2.0) * t.e
         assert cx == pytest.approx(geo.longitude, abs=1e-6)
         assert cy == pytest.approx(geo.latitude, abs=1e-6)
+
+    def test_yaw_rotates_transform(self):
+        """Non-zero yaw should populate the rotation terms b and d."""
+        geo = GeoInfo(
+            latitude=-34.56,
+            longitude=138.72,
+            altitude_agl=120.0,
+            focal_length_mm=80.0,
+            yaw_deg=90.0,  # heading east — image "up" points east
+            image_width=1000,
+            image_height=800,
+        )
+        t = compute_transform(geo)
+        # 90° rotation: the pure-scale terms (a, e) vanish, rotation terms dominate
+        assert abs(t.a) < 1e-12
+        assert abs(t.e) < 1e-12
+        assert abs(t.b) > 0
+        assert abs(t.d) > 0
+
+    def test_yaw_preserves_center(self):
+        """Image center must still map to (longitude, latitude) under rotation."""
+        geo = GeoInfo(
+            latitude=-34.56,
+            longitude=138.72,
+            altitude_agl=120.0,
+            focal_length_mm=80.0,
+            yaw_deg=236.64,
+            image_width=1000,
+            image_height=800,
+        )
+        t = compute_transform(geo)
+        cx = t.c + (geo.image_width / 2.0) * t.a + (geo.image_height / 2.0) * t.b
+        cy = t.f + (geo.image_width / 2.0) * t.d + (geo.image_height / 2.0) * t.e
+        assert cx == pytest.approx(geo.longitude, abs=1e-9)
+        assert cy == pytest.approx(geo.latitude, abs=1e-9)
+
+    def test_yaw_zero_matches_axis_aligned(self):
+        """Yaw=0 should produce the same transform as the previous axis-aligned form."""
+        geo = GeoInfo(0.0, 0.0, 100.0, 80.0, 0.0, 100, 100)
+        t = compute_transform(geo)
+        assert t.b == pytest.approx(0.0, abs=1e-15)
+        assert t.d == pytest.approx(0.0, abs=1e-15)
+        assert t.a > 0
+        assert t.e < 0
+
+    def test_yaw_zero_points_top_north(self):
+        """Yaw=0 (north heading): top-center pixel should map north of center at same longitude."""
+        geo = GeoInfo(0.0, 0.0, 100.0, 80.0, 0.0, 100, 100)
+        t = compute_transform(geo)
+        # top-center pixel: (col=W/2, row=0)
+        lon = t.a * (geo.image_width / 2) + t.c
+        lat = t.d * (geo.image_width / 2) + t.f
+        assert lon == pytest.approx(geo.longitude, abs=1e-12)
+        assert lat > geo.latitude  # north of center
+
+    def test_yaw_90_points_top_east(self):
+        """Yaw=90 (east heading): top-center pixel should map east of center at same latitude."""
+        geo = GeoInfo(0.0, 0.0, 100.0, 80.0, 90.0, 100, 100)
+        t = compute_transform(geo)
+        lon = t.a * (geo.image_width / 2) + t.c
+        lat = t.d * (geo.image_width / 2) + t.f
+        assert lon > geo.longitude  # east of center
+        assert lat == pytest.approx(geo.latitude, abs=1e-12)
+
+    def test_yaw_180_points_top_south(self):
+        """Yaw=180 (south heading): top-center pixel should map south of center."""
+        geo = GeoInfo(0.0, 0.0, 100.0, 80.0, 180.0, 100, 100)
+        t = compute_transform(geo)
+        lat = t.d * (geo.image_width / 2) + t.f
+        assert lat < geo.latitude  # south of center
+
+    def test_yaw_270_points_top_west(self):
+        """Yaw=270 (west heading): top-center pixel should map west of center."""
+        geo = GeoInfo(0.0, 0.0, 100.0, 80.0, 270.0, 100, 100)
+        t = compute_transform(geo)
+        lon = t.a * (geo.image_width / 2) + t.c
+        assert lon < geo.longitude  # west of center
 
 
 # ── write_world_file ─────────────────────────────────────────────────────────
@@ -386,6 +463,45 @@ class TestWriteWorldFile:
         t = compute_transform(geo)
         assert values[4] == pytest.approx(t.c, rel=1e-10)
         assert values[5] == pytest.approx(t.f, rel=1e-10)
+
+    def test_writes_prj_sidecar_with_wgs84_wkt(self, tmp_path, geo):
+        """A .prj sidecar must accompany the world file so GIS tools can resolve the CRS."""
+        img_path = tmp_path / "photo.jpg"
+        img_path.touch()
+        write_world_file(str(img_path), geo)
+        prj_path = img_path.with_suffix(".prj")
+        assert prj_path.exists()
+        wkt = prj_path.read_text()
+        # WGS84 WKT identifies the datum regardless of WKT1/WKT2 style
+        assert "WGS" in wkt and "84" in wkt
+
+    def test_writes_aux_xml_pam_sidecar(self, tmp_path, geo):
+        """GDAL's JPEG driver reads CRS from <name>.<ext>.aux.xml, not .prj."""
+        img_path = tmp_path / "photo.jpg"
+        img_path.touch()
+        write_world_file(str(img_path), geo)
+        aux_path = img_path.with_name(img_path.name + ".aux.xml")
+        assert aux_path.exists()
+        content = aux_path.read_text()
+        assert "<PAMDataset>" in content
+        assert "<SRS>" in content
+        assert "WGS" in content and "84" in content
+
+    def test_rasterio_reads_crs_from_jpeg(self, tmp_path, geo):
+        """End-to-end: GDAL/rasterio should resolve the CRS from the sidecars."""
+        import cv2
+        import rasterio
+
+        img_path = tmp_path / "photo.jpg"
+        cv2.imwrite(
+            str(img_path),
+            np.zeros((geo.image_height, geo.image_width, 3), dtype=np.uint8),
+        )
+        write_world_file(str(img_path), geo)
+
+        with rasterio.open(str(img_path)) as ds:
+            assert ds.crs is not None
+            assert ds.crs.to_epsg() == 4326
 
 
 # ── write_geotiff (requires rasterio) ────────────────────────────────────────

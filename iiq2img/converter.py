@@ -347,7 +347,7 @@ def _demosaic(iiq_path: Path, pipeline: str = "fast", bgr: bool = False) -> np.n
 
 
 def _convert_one_for_batch(
-    args: tuple[str, str, bool, str, int, int | None, str],
+    args: tuple[str, str, bool, str, int, int | None, str, bool, bool, int],
 ) -> Path:
     """Worker function for multiprocessing batch conversion."""
     (
@@ -358,6 +358,9 @@ def _convert_one_for_batch(
         compress_quality,
         max_dimension,
         pipeline,
+        extract_meta,
+        georef,
+        rotate,
     ) = args
     return convert_iiq(
         iiq_path,
@@ -367,6 +370,9 @@ def _convert_one_for_batch(
         compress_quality=compress_quality,
         max_dimension=max_dimension,
         pipeline=pipeline,
+        extract_meta=extract_meta,
+        georef=georef,
+        rotate=rotate,
     )
 
 
@@ -379,6 +385,9 @@ def batch_convert(
     max_dimension: int | None = None,
     workers: int | None = None,
     pipeline: str = "fast",
+    extract_meta: bool = True,
+    georef: bool = False,
+    rotate: int = 0,
 ) -> list[Path]:
     """Convert all IIQ files in a directory using multiprocessing.
 
@@ -386,10 +395,15 @@ def batch_convert(
         workers: Number of parallel workers. None = auto (min(cpu_count, 8)).
                  Set to 1 for sequential processing.
         pipeline: Demosaic pipeline — 'fast' (default, ~3x faster) or 'libraw' (accurate).
+        extract_meta: Whether to copy EXIF metadata from the source IIQ.
+        georef: If True, georeference each output (world files + CRS sidecars
+                for JPEG/PNG, GeoTIFF for TIFF).
+        rotate: Rotation angle in degrees — 0, 90, 180, 270 (for different camera mounts).
     """
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     pipeline = _resolve_pipeline(pipeline)
+    rotate = _resolve_rotate(rotate)
     output_fmt = resolve_format(output_format, None)
 
     iiq_files = sorted(input_dir.glob("*.IIQ"))
@@ -414,6 +428,9 @@ def batch_convert(
             compress_quality,
             max_dimension,
             pipeline,
+            extract_meta,
+            georef,
+            rotate,
         )
         for f in iiq_files
     ]
@@ -537,6 +554,24 @@ def _build_cli_parsers() -> tuple:
     batch_parser.add_argument(
         "--libraw", action="store_true", help="Use LibRaw PPG pipeline"
     )
+    batch_parser.add_argument(
+        "--georef",
+        action="store_true",
+        help="Write world file + CRS sidecars (JPEG/PNG) or GeoTIFF (TIFF)",
+    )
+    batch_parser.add_argument(
+        "--rotate",
+        type=int,
+        default=0,
+        choices=(0, 90, 180, 270),
+        help="Rotate output by 0/90/180/270° for different camera mounts",
+    )
+    batch_parser.add_argument(
+        "--no-meta",
+        dest="extract_meta",
+        action="store_false",
+        help="Skip copying EXIF metadata to output",
+    )
 
     # single-file parser
     file_parser = argparse.ArgumentParser(prog="iiq2img")
@@ -583,6 +618,9 @@ def _cli_main() -> int:
                 compress_quality=args.quality,
                 workers=args.workers,
                 pipeline=pl,
+                extract_meta=args.extract_meta,
+                georef=args.georef,
+                rotate=args.rotate,
             )
         except (FileNotFoundError, ValueError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)

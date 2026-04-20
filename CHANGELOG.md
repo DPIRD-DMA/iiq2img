@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0] — 2026-04-20
+
+### Added
+
+- `.prj` and `<image>.<ext>.aux.xml` sidecars written alongside world files for JPEG/PNG outputs, so QGIS/ArcGIS resolve the CRS instead of reporting "Unknown". GDAL's JPEG driver ignores `.prj`, so the PAM `.aux.xml` is what actually makes QGIS recognise the projection.
+- `batch_convert()` now accepts `extract_meta`, `georef`, and `rotate`, passing each through to `convert_iiq()`.
+- CLI `batch` gains `--georef`, `--rotate {0,90,180,270}`, and `--no-meta` flags.
+
+### Changed
+
+- `compute_transform()` now applies the XMP yaw to the affine transform, so georeferenced images display aligned to the flight direction in QGIS (adjacent strip images line up naturally). Assumes image top aligns with aircraft heading — use `rotate` to correct for different camera mounts.
+- Georef docstrings updated to reflect that world files do carry rotation.
+
 ## [0.5.0] — 2026-04-06
 
 ### Performance

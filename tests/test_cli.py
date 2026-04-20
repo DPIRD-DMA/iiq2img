@@ -70,6 +70,9 @@ class TestCliMain:
             compress_quality=75,
             workers=4,
             pipeline="fast",
+            extract_meta=True,
+            georef=False,
+            rotate=0,
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -86,6 +89,9 @@ class TestCliMain:
             compress_quality=90,
             workers=None,
             pipeline="fast",
+            extract_meta=True,
+            georef=False,
+            rotate=0,
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -118,6 +124,9 @@ class TestCliMain:
             compress_quality=90,
             workers=4,
             pipeline="libraw",
+            extract_meta=True,
+            georef=False,
+            rotate=0,
         )
 
     @patch("iiq2img.converter.convert_iiq")
@@ -198,6 +207,42 @@ class TestCliMain:
             compress_quality=90,
             workers=None,
             pipeline="fast",
+            extract_meta=True,
+            georef=False,
+            rotate=0,
+        )
+
+    @patch("iiq2img.converter.batch_convert")
+    def test_batch_georef_rotate_no_meta_flags(self, mock_batch):
+        """--georef, --rotate, and --no-meta should pass through."""
+        mock_batch.return_value = [Path("/out/img.jpg")]
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "iiq2img",
+                "batch",
+                "/in",
+                "/out",
+                "--georef",
+                "--rotate",
+                "90",
+                "--no-meta",
+            ],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _cli_main()
+            assert exc_info.value.code == EXIT_OK
+        mock_batch.assert_called_once_with(
+            "/in",
+            "/out",
+            output_format="jpg",
+            compress_quality=90,
+            workers=None,
+            pipeline="fast",
+            extract_meta=False,
+            georef=True,
+            rotate=90,
         )
 
 

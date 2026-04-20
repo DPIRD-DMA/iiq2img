@@ -45,7 +45,11 @@ rgb = read_iiq("photo.IIQ")
 results = batch_convert("./raw", "./out", workers=8)
 
 # Georeferenced output (requires `pip install iiq2img[geo]`)
-out_path = convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=True)
+# TIFF: CRS embedded in the GeoTIFF itself.
+# JPEG/PNG: sidecars written next to the image (.jgw/.pgw + .prj + .aux.xml)
+# so QGIS/ArcGIS recognise the projection.
+convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=True)
+convert_iiq("photo.IIQ", "output.jpg", georef=True)
 ```
 
 | Option | Default | Description |
@@ -55,7 +59,7 @@ out_path = convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=T
 | `compress_quality` | `90` | JPEG/PNG compression quality (1-100) |
 | `max_dimension` | `None` | Downscale longest edge to this size |
 | `rotate` | `0` | Rotate output: `0`, `90`, `180`, `270` |
-| `georef` | `False` | Write georeferenced GeoTIFF (requires `[geo]` extra) |
+| `georef` | `False` | World file + `.prj` + `.aux.xml` sidecars for JPEG/PNG, embedded CRS for TIFF (requires `[geo]` extra) |
 | `extract_meta` | `True` | Copy EXIF/GPS/XMP metadata to output |
 | `pipeline` | `"fast"` | Demosaic pipeline: `fast` or `libraw` |
 
@@ -70,6 +74,8 @@ iiq2img photo.IIQ --libraw            # use LibRaw PPG instead of fast
 iiq2img batch ./raw ./out                           # defaults: jpg, q=90, fast
 iiq2img batch ./raw ./out --format tiff --workers 8 # tiff, q=90, 8 workers
 iiq2img batch ./raw ./out --format jpg --quality 75 --workers 4 --libraw
+iiq2img batch ./raw ./out --georef                  # write georef sidecars for every output
+iiq2img batch ./raw ./out --rotate 180 --no-meta    # 180° flip, skip EXIF copy
 
 # Benchmark all pipelines on a sample file
 iiq2img benchmark photo.IIQ

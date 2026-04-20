@@ -4,7 +4,12 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from iiq2img import batch_convert
+
+SAMPLE_DIR = Path("PhaseOneSample")
+SAMPLE_IIQ = next(SAMPLE_DIR.glob("*.IIQ"), None) if SAMPLE_DIR.exists() else None
 
 
 class TestBatchConvert:
@@ -116,3 +121,42 @@ class TestBatchConvertEdgeCases:
 
         results = batch_convert(str(tmp_path), out_dir, workers=1)
         assert len(results) == 1
+
+
+@pytest.mark.skipif(SAMPLE_IIQ is None, reason="No sample IIQ file in PhaseOneSample/")
+class TestBatchConvertGeoref:
+    """End-to-end: batch_convert with georef=True on a real IIQ sample."""
+
+    def test_writes_sidecars_and_readable_crs(self, tmp_path: Path) -> None:
+        import shutil
+
+        import rasterio
+
+        # Stage a single sample into a tmp input dir so the test is self-contained
+        input_dir = tmp_path / "in"
+        input_dir.mkdir()
+        shutil.copy(SAMPLE_IIQ, input_dir / SAMPLE_IIQ.name)
+        out_dir = tmp_path / "out"
+
+        results = batch_convert(
+            str(input_dir),
+            str(out_dir),
+            georef=True,
+            max_dimension=512,  # keep the test quick
+            workers=1,
+        )
+        assert len(results) == 1
+        jpg = results[0]
+        assert jpg.exists()
+
+        # Sidecars for GIS tools
+        assert jpg.with_suffix(".jgw").exists()
+        assert jpg.with_suffix(".prj").exists()
+        assert jpg.with_name(jpg.name + ".aux.xml").exists()
+
+        # GDAL/rasterio should resolve the CRS through the aux.xml sidecar
+        with rasterio.open(str(jpg)) as ds:
+            assert ds.crs is not None
+            assert ds.crs.to_epsg() == 4326
+            # Yaw from XMP should populate the rotation terms
+            assert ds.transform.b != 0 or ds.transform.d != 0

@@ -213,6 +213,9 @@ class TestConvertOneForBatch:
             90,
             None,
             "libraw",
+            True,
+            False,
+            0,
         )
         result = _convert_one_for_batch(args)
         mock_convert.assert_called_once_with(
@@ -223,6 +226,9 @@ class TestConvertOneForBatch:
             compress_quality=90,
             max_dimension=None,
             pipeline="libraw",
+            extract_meta=True,
+            georef=False,
+            rotate=0,
         )
         assert result == Path("/out/test.jpg")
 
@@ -237,6 +243,9 @@ class TestConvertOneForBatch:
             75,
             500,
             "libraw",
+            True,
+            False,
+            0,
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
@@ -254,10 +263,34 @@ class TestConvertOneForBatch:
             90,
             None,
             "fast",
+            True,
+            False,
+            0,
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
         assert call_kwargs["pipeline"] == "fast"
+
+    @patch("iiq2img.converter.convert_iiq")
+    def test_passes_georef_rotate_and_meta_flags(self, mock_convert):
+        mock_convert.return_value = Path("/out/test.jpg")
+        args = (
+            "/in/test.IIQ",
+            "/out/test.jpg",
+            False,
+            "jpg",
+            90,
+            None,
+            "fast",
+            False,
+            True,
+            180,
+        )
+        _convert_one_for_batch(args)
+        call_kwargs = mock_convert.call_args[1]
+        assert call_kwargs["extract_meta"] is False
+        assert call_kwargs["georef"] is True
+        assert call_kwargs["rotate"] == 180
 
 
 class TestConvertIiqGeoref:
