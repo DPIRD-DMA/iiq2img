@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0] — 2026-04-21
+
+### Added
+
+- `geotiff_compress` parameter on `convert_iiq()` and `batch_convert()` — choose between `"jpeg"` (default, lossy/small), `"lzw"` or `"deflate"` (lossless), or `"none"`. JPEG keeps `photometric=YCBCR` + configurable `jpeg_quality`; the lossless modes skip those.
+- CLI `--geotiff-compress {jpeg,lzw,deflate,none}` flag on `iiq2img batch`.
+- `UserWarning` when `geotiff_compress` is set to a non-default value on an output that isn't actually a GeoTIFF (non-TIFF format, or TIFF without `georef=True`), so silent mis-targeting surfaces instead of being quietly ignored.
+
 ## [0.6.0] — 2026-04-20
 
 ### Added
