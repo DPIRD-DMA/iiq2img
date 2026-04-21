@@ -73,6 +73,7 @@ class TestCliMain:
             extract_meta=True,
             georef=False,
             rotate=0,
+            geotiff_compress="jpeg",
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -92,6 +93,7 @@ class TestCliMain:
             extract_meta=True,
             georef=False,
             rotate=0,
+            geotiff_compress="jpeg",
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -127,6 +129,7 @@ class TestCliMain:
             extract_meta=True,
             georef=False,
             rotate=0,
+            geotiff_compress="jpeg",
         )
 
     @patch("iiq2img.converter.convert_iiq")
@@ -210,6 +213,7 @@ class TestCliMain:
             extract_meta=True,
             georef=False,
             rotate=0,
+            geotiff_compress="jpeg",
         )
 
     @patch("iiq2img.converter.batch_convert")
@@ -243,7 +247,32 @@ class TestCliMain:
             extract_meta=False,
             georef=True,
             rotate=90,
+            geotiff_compress="jpeg",
         )
+
+    @patch("iiq2img.converter.batch_convert")
+    def test_batch_geotiff_compress_flag(self, mock_batch):
+        """--geotiff-compress lzw should pass through."""
+        mock_batch.return_value = [Path("/out/img.tif")]
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "iiq2img",
+                "batch",
+                "/in",
+                "/out",
+                "--format",
+                "tiff",
+                "--georef",
+                "--geotiff-compress",
+                "lzw",
+            ],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                _cli_main()
+            assert exc_info.value.code == EXIT_OK
+        assert mock_batch.call_args.kwargs["geotiff_compress"] == "lzw"
 
 
 class TestCliExitCodes:

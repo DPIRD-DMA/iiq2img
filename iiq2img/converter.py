@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 _VALID_PIPELINES = ("libraw", "fast")
 _VALID_ROTATIONS = (0, 90, 180, 270, 360)
+_VALID_GEOTIFF_COMPRESS = ("jpeg", "lzw", "deflate", "none")
 
 # CLI exit codes
 EXIT_OK = 0
@@ -51,6 +52,17 @@ def _resolve_pipeline(value: str) -> str:
     if v not in _VALID_PIPELINES:
         raise ValueError(
             f"Unknown pipeline: {value!r}. Expected one of: {', '.join(_VALID_PIPELINES)!r}"
+        )
+    return v
+
+
+def _resolve_geotiff_compress(value: str) -> str:
+    """Validate and normalise a GeoTIFF compression name to lowercase."""
+    v = value.lower()
+    if v not in _VALID_GEOTIFF_COMPRESS:
+        raise ValueError(
+            f"Unknown GeoTIFF compression: {value!r}. "
+            f"Expected one of: {', '.join(_VALID_GEOTIFF_COMPRESS)!r}"
         )
     return v
 
@@ -126,6 +138,7 @@ def convert_iiq(
     rotate: int = 0,
     pipeline: str = "fast",
     verbose: bool = False,
+    geotiff_compress: str = "jpeg",
 ) -> Path:
     """
     Convert a Phase One IIQ raw file to JPEG, PNG, or TIFF.
@@ -136,7 +149,8 @@ def convert_iiq(
         thumbnail: If True, extract the embedded 640x480 thumbnail instead of full demosaic.
         output_format: Output format string ('jpg', 'png', 'tif'),
                        or None to infer from output_path extension (default: 'jpg')
-        compress_quality: Compression quality 1-100 (JPEG quality / PNG compression)
+        compress_quality: Compression quality 1-100 (JPEG quality / PNG compression).
+                          Also the JPEG quality when geotiff_compress='jpeg'.
         max_dimension: If set, resize longest edge to this value
         extract_meta: Whether to extract and retain EXIF metadata
         georef: If True, georeference the output (world file for JPEG/PNG, GeoTIFF for TIFF)
@@ -144,6 +158,8 @@ def convert_iiq(
                 360 is accepted and treated as 0.
         pipeline: Demosaic pipeline — 'fast' (~3x faster, default) or 'libraw' (accurate, ~2.8s).
         verbose: If True, print per-step timing information.
+        geotiff_compress: GeoTIFF compression — 'jpeg' (default, lossy/small),
+                          'lzw' or 'deflate' (lossless), or 'none'.
 
     Returns:
         Path to the output file.
@@ -151,6 +167,7 @@ def convert_iiq(
     iiq_path = Path(iiq_path)
     pipeline = _resolve_pipeline(pipeline)
     rotate = _resolve_rotate(rotate)
+    geotiff_compress = _resolve_geotiff_compress(geotiff_compress)
     _validate_iiq_path(iiq_path)
     logger.debug(
         "Converting %s -> %s (pipeline=%s)", iiq_path, output_path or "auto", pipeline
@@ -175,6 +192,17 @@ def convert_iiq(
         t0 = time.perf_counter()
 
     is_geotiff = georef and output_fmt == "tiff"
+
+    if geotiff_compress != "jpeg" and not is_geotiff:
+        import warnings
+
+        warnings.warn(
+            f"geotiff_compress={geotiff_compress!r} is only applied to GeoTIFF "
+            f"output (output_format='tiff' with georef=True). It will be ignored "
+            f"for the current output (format={output_fmt!r}, georef={georef}).",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Fast pipeline can output BGR directly, fusing the channel swap into the
     # gamma LUT and saving a full-image cv2.cvtColor pass (~55ms for 120MP).
@@ -212,7 +240,7 @@ def convert_iiq(
 
     if is_geotiff:
         # Write GeoTIFF directly (skip EXIF injection — rasterio handles metadata)
-        _write_geotiff(img, out_path, metadata, compress_quality)
+        _write_geotiff(img, out_path, metadata, compress_quality, geotiff_compress)
     else:
         bgr = img if use_bgr else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         encode_image(bgr, out_path, output_fmt, compress_quality)
@@ -257,8 +285,13 @@ def _write_geotiff(
     output_path: Path,
     metadata: dict[str, str],
     compress_quality: int,
+    geotiff_compress: str = "jpeg",
 ) -> None:
-    """Write image as GeoTIFF with embedded georeferencing."""
+    """Write image as GeoTIFF with embedded georeferencing.
+
+    geotiff_compress: 'jpeg' (lossy, needs YCBCR photometric), 'lzw' or 'deflate'
+    (lossless), or 'none'. compress_quality applies only to JPEG compression.
+    """
     from iiq2img.georef import compute_transform, extract_geo_info
 
     h, w = rgb.shape[:2]
@@ -277,7 +310,7 @@ def _write_geotiff(
     transform = compute_transform(geo)
     crs = CRS.from_epsg(4326)
 
-    profile = {
+    profile: dict = {
         "driver": "GTiff",
         "dtype": "uint8",
         "width": w,
@@ -285,10 +318,14 @@ def _write_geotiff(
         "count": 3,
         "crs": crs,
         "transform": transform,
-        "compress": "JPEG",
-        "jpeg_quality": compress_quality,
-        "photometric": "YCBCR",
     }
+    if geotiff_compress == "jpeg":
+        profile["compress"] = "JPEG"
+        profile["jpeg_quality"] = compress_quality
+        profile["photometric"] = "YCBCR"
+    elif geotiff_compress in ("lzw", "deflate"):
+        profile["compress"] = geotiff_compress.upper()
+    # 'none' → omit compress key entirely
 
     with rasterio.open(str(output_path), "w", **profile) as dst:
         for band in range(3):
@@ -347,7 +384,7 @@ def _demosaic(iiq_path: Path, pipeline: str = "fast", bgr: bool = False) -> np.n
 
 
 def _convert_one_for_batch(
-    args: tuple[str, str, bool, str, int, int | None, str, bool, bool, int],
+    args: tuple[str, str, bool, str, int, int | None, str, bool, bool, int, str],
 ) -> Path:
     """Worker function for multiprocessing batch conversion."""
     (
@@ -361,6 +398,7 @@ def _convert_one_for_batch(
         extract_meta,
         georef,
         rotate,
+        geotiff_compress,
     ) = args
     return convert_iiq(
         iiq_path,
@@ -373,6 +411,7 @@ def _convert_one_for_batch(
         extract_meta=extract_meta,
         georef=georef,
         rotate=rotate,
+        geotiff_compress=geotiff_compress,
     )
 
 
@@ -388,6 +427,7 @@ def batch_convert(
     extract_meta: bool = True,
     georef: bool = False,
     rotate: int = 0,
+    geotiff_compress: str = "jpeg",
 ) -> list[Path]:
     """Convert all IIQ files in a directory using multiprocessing.
 
@@ -399,11 +439,13 @@ def batch_convert(
         georef: If True, georeference each output (world files + CRS sidecars
                 for JPEG/PNG, GeoTIFF for TIFF).
         rotate: Rotation angle in degrees — 0, 90, 180, 270 (for different camera mounts).
+        geotiff_compress: GeoTIFF compression — 'jpeg', 'lzw', 'deflate', or 'none'.
     """
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     pipeline = _resolve_pipeline(pipeline)
     rotate = _resolve_rotate(rotate)
+    geotiff_compress = _resolve_geotiff_compress(geotiff_compress)
     output_fmt = resolve_format(output_format, None)
 
     iiq_files = sorted(input_dir.glob("*.IIQ"))
@@ -431,6 +473,7 @@ def batch_convert(
             extract_meta,
             georef,
             rotate,
+            geotiff_compress,
         )
         for f in iiq_files
     ]
@@ -572,6 +615,12 @@ def _build_cli_parsers() -> tuple:
         action="store_false",
         help="Skip copying EXIF metadata to output",
     )
+    batch_parser.add_argument(
+        "--geotiff-compress",
+        default="jpeg",
+        choices=_VALID_GEOTIFF_COMPRESS,
+        help="GeoTIFF compression (default: jpeg)",
+    )
 
     # single-file parser
     file_parser = argparse.ArgumentParser(prog="iiq2img")
@@ -621,6 +670,7 @@ def _cli_main() -> int:
                 extract_meta=args.extract_meta,
                 georef=args.georef,
                 rotate=args.rotate,
+                geotiff_compress=args.geotiff_compress,
             )
         except (FileNotFoundError, ValueError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)

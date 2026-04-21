@@ -216,6 +216,7 @@ class TestConvertOneForBatch:
             True,
             False,
             0,
+            "jpeg",
         )
         result = _convert_one_for_batch(args)
         mock_convert.assert_called_once_with(
@@ -229,6 +230,7 @@ class TestConvertOneForBatch:
             extract_meta=True,
             georef=False,
             rotate=0,
+            geotiff_compress="jpeg",
         )
         assert result == Path("/out/test.jpg")
 
@@ -246,6 +248,7 @@ class TestConvertOneForBatch:
             True,
             False,
             0,
+            "jpeg",
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
@@ -266,6 +269,7 @@ class TestConvertOneForBatch:
             True,
             False,
             0,
+            "jpeg",
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
@@ -285,6 +289,7 @@ class TestConvertOneForBatch:
             False,
             True,
             180,
+            "jpeg",
         )
         _convert_one_for_batch(args)
         call_kwargs = mock_convert.call_args[1]
@@ -328,6 +333,70 @@ class TestConvertIiqGeoref:
         out = str(tmp_path / "out.jpg")
         convert_iiq(str(fake_iiq), out, georef=True, extract_meta=False)
         mock_meta.assert_called_once()
+
+
+class TestGeotiffCompress:
+    @patch("iiq2img.converter._write_geotiff")
+    @patch("iiq2img.converter.extract_metadata", return_value={"xmp": "<gps/>"})
+    @patch("iiq2img.converter._demosaic")
+    def test_lzw_passed_to_geotiff_writer(
+        self, mock_demosaic, mock_meta, mock_geotiff, tmp_path, fake_iiq
+    ):
+        mock_demosaic.return_value = np.zeros((100, 200, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.tif")
+        convert_iiq(
+            str(fake_iiq),
+            out,
+            output_format="tiff",
+            georef=True,
+            geotiff_compress="lzw",
+        )
+        # _write_geotiff(img, out_path, metadata, compress_quality, geotiff_compress)
+        assert mock_geotiff.call_args.args[4] == "lzw"
+
+    def test_invalid_compress_raises(self, tmp_path, fake_iiq):
+        with pytest.raises(ValueError, match="Unknown GeoTIFF compression"):
+            convert_iiq(
+                str(fake_iiq), str(tmp_path / "out.tif"), geotiff_compress="bogus"
+            )
+
+    @patch("iiq2img.converter.copy_metadata_to_output")
+    @patch("iiq2img.converter.extract_metadata", return_value={})
+    @patch("iiq2img.converter._demosaic")
+    def test_warns_when_compress_targets_non_geotiff(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
+        """Setting geotiff_compress=lzw on a JPEG output should warn, since it's ignored."""
+        mock_demosaic.return_value = np.zeros((100, 200, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.jpg")
+        with pytest.warns(UserWarning, match="only applied to GeoTIFF"):
+            convert_iiq(str(fake_iiq), out, geotiff_compress="lzw")
+
+    @patch("iiq2img.converter.copy_metadata_to_output")
+    @patch("iiq2img.converter.extract_metadata", return_value={"xmp": "<gps/>"})
+    @patch("iiq2img.converter._demosaic")
+    def test_warns_when_geotiff_requested_without_georef(
+        self, mock_demosaic, mock_meta, mock_copy, tmp_path, fake_iiq
+    ):
+        """TIFF format without georef=True produces a plain TIFF, so geotiff_compress is ignored."""
+        mock_demosaic.return_value = np.zeros((100, 200, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.tif")
+        with pytest.warns(UserWarning, match="only applied to GeoTIFF"):
+            convert_iiq(
+                str(fake_iiq), out, output_format="tiff", geotiff_compress="deflate"
+            )
+
+    @patch("iiq2img.converter._write_geotiff")
+    @patch("iiq2img.converter.extract_metadata", return_value={"xmp": "<gps/>"})
+    @patch("iiq2img.converter._demosaic")
+    def test_no_warning_for_default_jpeg_on_non_geotiff(
+        self, mock_demosaic, mock_meta, mock_geotiff, tmp_path, fake_iiq, recwarn
+    ):
+        """Default geotiff_compress='jpeg' on a JPEG output should NOT warn."""
+        mock_demosaic.return_value = np.zeros((100, 200, 3), dtype=np.uint8)
+        out = str(tmp_path / "out.jpg")
+        convert_iiq(str(fake_iiq), out)
+        assert not [w for w in recwarn if "GeoTIFF" in str(w.message)]
 
 
 class TestConvertIiqRotate:

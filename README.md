@@ -50,6 +50,10 @@ results = batch_convert("./raw", "./out", workers=8)
 # so QGIS/ArcGIS recognise the projection.
 convert_iiq("photo.IIQ", "output.tif", output_format="tiff", georef=True)
 convert_iiq("photo.IIQ", "output.jpg", georef=True)
+
+# Lossless GeoTIFF (LZW or DEFLATE) instead of default lossy JPEG-in-TIFF
+convert_iiq("photo.IIQ", "output.tif", output_format="tiff",
+            georef=True, geotiff_compress="lzw")
 ```
 
 | Option | Default | Description |
@@ -62,6 +66,7 @@ convert_iiq("photo.IIQ", "output.jpg", georef=True)
 | `georef` | `False` | World file + `.prj` + `.aux.xml` sidecars for JPEG/PNG, embedded CRS for TIFF (requires `[geo]` extra) |
 | `extract_meta` | `True` | Copy EXIF/GPS/XMP metadata to output |
 | `pipeline` | `"fast"` | Demosaic pipeline: `fast` or `libraw` |
+| `geotiff_compress` | `"jpeg"` | GeoTIFF compression: `jpeg` (lossy, smallest), `lzw`/`deflate` (lossless), `none` |
 
 ## CLI
 
@@ -76,6 +81,7 @@ iiq2img batch ./raw ./out --format tiff --workers 8 # tiff, q=90, 8 workers
 iiq2img batch ./raw ./out --format jpg --quality 75 --workers 4 --libraw
 iiq2img batch ./raw ./out --georef                  # write georef sidecars for every output
 iiq2img batch ./raw ./out --rotate 180 --no-meta    # 180° flip, skip EXIF copy
+iiq2img batch ./raw ./out --format tiff --georef --geotiff-compress lzw  # lossless GeoTIFFs
 
 # Benchmark all pipelines on a sample file
 iiq2img benchmark photo.IIQ
